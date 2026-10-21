@@ -96,3 +96,32 @@ def test_sunday_afternoon():
 def test_today_is_kept_as_today():
     w = resolve(raw_text="where can I play today near HSR Layout", now=NOW)
     assert w.start.date().isoformat() == "2026-10-21"
+
+
+def test_explicit_span_beats_a_hallucinated_day():
+    """The model sometimes invents 'next weekend' for 'in the next two days'.
+
+    The user's own wording wins, otherwise the answer lands a week out.
+    """
+    w = resolve(
+        raw_text="morning walk near Powai in the next two days",
+        day="next_weekend",
+        part_of_day="morning",
+        hour=21,
+        days_ahead=1,
+        now=NOW,
+    )
+    assert w.start.date().isoformat() == "2026-10-22"
+    assert w.end.date().isoformat() == "2026-10-23"
+    assert "the next 2 days" in w.label
+
+
+def test_model_hour_is_ignored_when_the_question_has_no_clock():
+    w = resolve(
+        raw_text="a walk near Powai tomorrow morning",
+        day="tomorrow",
+        part_of_day="morning",
+        hour=21,
+        now=NOW,
+    )
+    assert all(h.hour < 12 for h in w.hours)

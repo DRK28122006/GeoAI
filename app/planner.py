@@ -130,11 +130,16 @@ def resolve(
     words = {
         "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
     }
-    m = re.search(r"\b(?:next|in|over|for)\s+(?:(\d{1,2})|(" + "|".join(words) + r"))\s+days?\b", raw)
+    m = re.search(
+        r"\b(?:next|in|over|for)\s+(?:(\d{1,2})|(" + "|".join(words) + r"))\s+days?\b",
+        raw,
+    )
+    span_explicit = False
     if m:
         span = int(m.group(1)) if m.group(1) else words[m.group(2)]
         span = max(1, min(span, 7))
         day_label_hint = f"the next {span} days"
+        span_explicit = True
     else:
         day_label_hint = ""
 
@@ -156,6 +161,11 @@ def resolve(
             raw_day = wd.group(1)
 
     chosen_day = raw_day or (day if day and day != "none" else None)
+
+    # "in the next two days" is an explicit span. The model sometimes invents
+    # a named day for it, and the user's own words win.
+    if span_explicit and raw_day is None:
+        chosen_day = None
 
     target_days: list[datetime] = []
     day_label = ""
