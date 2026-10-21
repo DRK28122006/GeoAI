@@ -1,0 +1,23 @@
+[project]
+name = "geoai-outdoor-assistant"
+version = "0.1.0"
+description = "Backend for GeoAI Outdoor Assistant"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "httpx",
+    "pydantic>=2.0",
+    "pydantic-settings",
+    "diskcache",
+    "PyYAML",
+    "astral",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

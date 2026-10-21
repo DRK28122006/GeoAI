@@ -1,0 +1,11 @@
+hazards:
+  industrial:
+    tags: ["landuse=industrial", "power=plant", "man_made=works"]
+    score: -2
+  traffic:
+    tags: ["highway=motorway", "highway=trunk", "highway=primary", "highway=secondary"]
+    score: -1
+mitigators:
+  nature:
+    tags: ["natural=water", "waterway=*", "landuse=forest", "landuse=grass", "leisure=park"]
+    score: 1

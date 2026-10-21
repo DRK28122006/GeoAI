@@ -1,0 +1,7 @@
+profiles:
+  asthma:
+    hazards: ["air_quality", "extreme_temperature"]
+    mitigators: ["forest", "park"]
+  general:
+    hazards: ["extreme_weather"]
+    mitigators: ["all"]
