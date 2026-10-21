@@ -166,6 +166,20 @@ class BaseSource:
                 latency_ms=0.0,
             )
 
+        # A source that just failed is skipped for a moment instead of being
+        # retried on every request, which is what made a flaky Overpass cost
+        # 15 seconds each time.
+        fail_key = f"fail:{settings.CACHE_VERSION}:{cache_key}"
+        if app_cache.get(fail_key) is not None:
+            return SourceResult(
+                source=self.name,
+                ok=False,
+                params=params,
+                error=str(app_cache.get(fail_key)),
+                cached=True,
+                latency_ms=0.0,
+            )
+
         start = time.perf_counter()
         try:
             data = await fetch_fn(self)

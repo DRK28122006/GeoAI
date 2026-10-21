@@ -71,6 +71,7 @@ class Verifier:
         allowed_hours: set[int] = facts.get("hours", set())
         allowed_places: set[str] = facts.get("places", set())
         allowed_dates: set[str] = facts.get("dates", set())
+        allowed_evidence: set[str] = facts.get("evidence", set())
 
         violations: list[str] = []
         checked = {"numbers": 0, "times": 0, "places": 0}
@@ -162,6 +163,12 @@ class Verifier:
                 continue
             violations.append(f"place name not in the fetched venues: {phrase}")
 
+        # ------------------------------------------------- evidence citations
+        cited = set(re.findall(r"\bE(?:_[A-Z]+|\d+)\b", text))
+        for key in cited:
+            if key not in allowed_evidence:
+                violations.append(f"cites evidence that does not exist: {key}")
+
         return VerificationResult(
             verified=not violations, violations=violations, checked=checked
         )
@@ -211,4 +218,5 @@ class Verifier:
             "hours": hours,
             "places": places,
             "dates": dates,
+            "evidence": set(bundle.get("evidence", {}).keys()),
         }

@@ -88,6 +88,7 @@ class Slot(BaseModel):
 
 class EngineResult(BaseModel):
     slots: list[Slot] = Field(default_factory=list)
+    all_slots: list[Slot] = Field(default_factory=list)
     avoid: list[dict[str, Any]] = Field(default_factory=list)
     alternatives: list[Slot] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
@@ -436,6 +437,8 @@ class ExposureEngine:
 
                 # ------------------------------------------------ constraints
                 reasons = []
+                if idx is None:
+                    reasons.append("no forecast is available for this hour")
                 if code in THUNDERSTORM_CODES or (cape or 0) > 1500:
                     reasons.append("thunderstorm risk")
                 if precip_prob is not None and precip_prob > float(act.get("precip_prob_limit", 60)):
@@ -491,7 +494,7 @@ class ExposureEngine:
                     travel_min=None if travel_min is None else round(travel_min, 1),
                     distance_km=None if distance_km is None else round(distance_km, 2),
                     daylight={"sunrise": sunrise, "sunset": sunset},
-                    evidence_ids=["E_WEATHER", "E_AQ", "E_VENUES", "E_HAZARDS"],
+                    evidence_ids=["E_VENUES", "E_WEATHER", "E_AQ", "E_HAZARDS"],
                     disqualified="; ".join(reasons) if reasons else None,
                 )
                 slots.append(slot)
@@ -508,7 +511,9 @@ class ExposureEngine:
 
         slots.sort(key=lambda s: s.score, reverse=True)
         good = [s for s in slots if not s.disqualified]
-        result = EngineResult(slots=good, avoid=avoid[:40])
+        result = EngineResult(
+            slots=good, all_slots=slots, avoid=avoid[:40]
+        )
         result.notes.append(
             f"Scored {len(slots)} venue-hour combinations; {len(good)} passed the hard constraints."
         )

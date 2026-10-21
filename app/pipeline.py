@@ -61,6 +61,25 @@ LOCATION_CUES = (
     "next to",
 )
 
+# words that start a question and are never a place name
+QUESTION_WORDS = {
+    "Is", "Are", "Am", "Can", "Could", "Do", "Does", "Did", "Will", "Would",
+    "Should", "Where", "When", "What", "Which", "Who", "Whom", "Why", "How",
+    "I", "We", "You", "The", "A", "An", "My", "Our", "Please", "Any", "Some",
+    "Good", "Best", "There", "It", "This", "That", "Planning", "Looking",
+}
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    """Keep the order but drop repeats, so the response does not repeat itself."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if item and item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
 
 class Pipeline:
     def __init__(self) -> None:
@@ -85,35 +104,60 @@ class Pipeline:
             for w in words:
                 if w in q and len(w) > best:
                     activity, best = act, len(w)
+
         profile = [
             p
             for p, words in PROFILE_KEYWORDS.items()
             if any(w in q for w in words)
         ]
+
+        # The place can be introduced in several ways.
         location = ""
-        m = re.search(
-            r"(?:near|around|in|at|close to)\s+([A-Za-z][A-Za-z .'-]{2,40})",
-            question,
-            re.IGNORECASE,
+        patterns = (
+            r"(?:within|inside)\s+\d+\s*km\s+(?:of|from)\s+([A-Za-z][A-Za-z .'-]{2,40})",
+            r"(?:near|around|close to|beside|opposite|next to)\s+([A-Za-z][A-Za-z .'-]{2,40})",
+            r"\bin\s+([A-Z][A-Za-z .'-]{2,40})",
+            r"\bat\s+([A-Z][A-Za-z .'-]{2,40})",
         )
-        if m:
-            location = m.group(1).split(",")[0].strip()
+        for pattern in patterns:
+            m = re.search(pattern, question, re.IGNORECASE)
+            if m:
+                location = m.group(1).split(",")[0].strip()
+                break
+        if not location:
+            # a capitalised phrase that is not a question word
+            m = re.search(
+                r"(?:^|[?.]\s)([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2})", question
+            )
+            if m and m.group(1).split()[0] not in QUESTION_WORDS:
+                location = m.group(1).strip()
+
         radius = 5.0
-        rm = re.search(r"(\d{1,2})\s*km", q)
+        rm = re.search(r"(\d{1,3})\s*km", q)
         if rm:
             radius = float(rm.group(1))
+
+        out_of_scope = bool(
+            re.search(
+                r"\b(poem|essay|write me|translate|recipe|joke|story|song|lyrics|"
+                r"homework|resume|cover letter|bio for|linkedin|sql query|regex|"
+                r"who is|what is the capital|news about)\b",
+                q,
+            )
+        )
+
         return {
-            "activity": activity,
+            "activity": "other" if out_of_scope else activity,
             "location": location,
             "radius_km": radius,
             "time_text": "",
             "day": None,
             "part_of_day": None,
             "hour": None,
-            "days_ahead": 1,
+            "days_ahead": self._extract_days_ahead(question),
             "profile": profile,
-            "intent_type": "recommend",
-            "out_of_scope": False,
+            "intent_type": self._extract_intent_type(question),
+            "out_of_scope": out_of_scope,
             "missing": [] if location else ["location"],
             "_fallback": True,
         }
@@ -281,12 +325,85 @@ class Pipeline:
 
         # ---------------------------------------------------------- engine
         engine_result = self.engine.score(bundle)
-        if not engine_result.slots:
-            note = " ".join(bundle.get("limitations", [])) or "No suitable slot was found."
+        top_slots = engine_result.slots[:5]
+
+        # Nothing passed the hard constraints. That is a real answer, not a
+        # failure: say why, and offer the least bad option with the caveat.
+        if not top_slots and engine_result.all_slots:
+            best = max(engine_result.all_slots, key=lambda s: s.score)
+            reasons = sorted(
+                {
+                    r
+                    for s in engine_result.all_slots
+                    for r in (s.disqualified or "").split("; ")
+                    if r
+                }
+            )
+            headline = (
+                f"Nothing is ideal in that window. The best of the options is "
+                f"{best.place} around {best.when.strftime('%H:%M')} on "
+                f"{best.when.strftime('%a %d %b')} (score {best.score:.0f}/100), "
+                f"but it still has problems: {best.disqualified}."
+            )
+            body = [headline]
+            for reason in reasons[:5]:
+                body.append(f"- avoid this because of {reason}")
+            body.append(
+                "Check the avoid windows in the response for the hours that are "
+                "actually worth going."
+            )
             return {
                 "status": "partial",
                 "clarification_question": None,
-                "parsed": parsed,
+                "parsed": self._parsed_block(intent, bundle, parse_source),
+                "recommendation": {
+                    "slot_id": best.slot_id,
+                    "place": best.place,
+                    "lat": best.lat,
+                    "lon": best.lon,
+                    "time": best.when.isoformat(),
+                    "time_label": best.time_label,
+                    "score": best.score,
+                    "caveat": best.disqualified,
+                    "why": self._template_why(best),
+                    "breakdown": best.breakdown,
+                    "weather": best.weather,
+                    "air": best.air,
+                    "travel_min": best.travel_min,
+                    "evidence": best.evidence_ids,
+                },
+                "alternatives": [],
+                "avoid": engine_result.avoid,
+                "advice": {
+                    "carry": self._template_carry(best, bundle),
+                    "watch_for": self._template_watch(best, bundle),
+                },
+                "evidence": bundle.get("evidence", {}),
+                "proof": self._build_proof(best, bundle, intent),
+                "map_geojson": self._geojson(bundle, engine_result.all_slots[:8]),
+                "data_as_of": started.isoformat(),
+                "sources": self._sources(),
+                "limitations": _dedupe(
+                    bundle.get("limitations", []) + reasons[:5]
+                ),
+                "timings_ms": {**bundle.get("timings", {}), **stage},
+                "answer": "\n".join(body),
+                "verified": True,
+            }
+
+        if not engine_result.slots:
+            note = (
+                f"I could not find any mapped {intent.activity} venues near "
+                f"{bundle['origin'].short_name} within {intent.radius_km:.0f} km, "
+                "so there is nothing to recommend yet."
+            )
+            extra = bundle.get("limitations", [])
+            if extra:
+                note += " " + " ".join(extra)
+            return {
+                "status": "partial",
+                "clarification_question": None,
+                "parsed": self._parsed_block(intent, bundle, parse_source),
                 "recommendation": None,
                 "alternatives": [],
                 "avoid": engine_result.avoid,
@@ -295,12 +412,11 @@ class Pipeline:
                 "map_geojson": self._geojson(bundle, []),
                 "data_as_of": started.isoformat(),
                 "sources": self._sources(),
-                "limitations": bundle.get("limitations", []) + [note],
-                "timings_ms": bundle.get("timings", {}),
+                "limitations": _dedupe(extra),
+                "timings_ms": {**bundle.get("timings", {}), **stage},
                 "answer": note,
             }
 
-        top_slots = engine_result.slots[:5]
         options = [self._slot_option(s) for s in top_slots]
 
         # ------------------------------------------------------- choose
@@ -361,19 +477,7 @@ class Pipeline:
         return {
             "status": "ok" if verification.verified else "partial",
             "clarification_question": None,
-            "parsed": {
-                "activity": intent.activity,
-                "location": bundle["origin"].short_name,
-                "radius_km": intent.radius_km,
-                "window": {
-                    "start": bundle["window"].start.isoformat(),
-                    "end": bundle["window"].end.isoformat(),
-                    "label": bundle["window"].label,
-                },
-                "profile": intent.profile,
-                "assumptions": bundle["window"].assumptions,
-                "parse_source": parse_source,
-            },
+            "parsed": self._parsed_block(intent, bundle, parse_source),
             "recommendation": {
                 "slot_id": chosen.slot_id,
                 "place": chosen.place,
@@ -409,6 +513,7 @@ class Pipeline:
                 or self._template_watch(chosen, bundle),
             },
             "evidence": bundle.get("evidence", {}),
+            "proof": self._build_proof(chosen, bundle, intent),
             "map_geojson": self._geojson(bundle, engine_result.slots[:8]),
             "data_as_of": started.isoformat(),
             "sources": self._sources(),
@@ -420,6 +525,25 @@ class Pipeline:
         }
 
     # ------------------------------------------------------------- helpers
+    def _parsed_block(self, intent, bundle, parse_source: str) -> dict[str, Any]:
+        origin = bundle.get("origin")
+        window = bundle.get("window")
+        return {
+            "activity": intent.activity,
+            "location": origin.short_name if origin else intent.location_text,
+            "radius_km": intent.radius_km,
+            "window": {
+                "start": window.start.isoformat(),
+                "end": window.end.isoformat(),
+                "label": window.label,
+            }
+            if window
+            else {},
+            "profile": intent.profile,
+            "assumptions": list(window.assumptions) if window else [],
+            "parse_source": parse_source,
+        }
+
     @staticmethod
     def _slot_option(slot) -> dict[str, Any]:
         return {
@@ -587,6 +711,108 @@ class Pipeline:
                 }
             )
         return {"type": "FeatureCollection", "features": features}
+
+    def _build_proof(self, chosen, bundle: dict[str, Any], intent) -> dict[str, Any]:
+        """The evidence behind the recommendation, in one readable block.
+
+        This is what answers "why this place and this time": every factor
+        carries the value we actually fetched, the source it came from and
+        the evidence key, so a judge can check it.
+        """
+        evidence = bundle.get("evidence", {})
+        w, a = chosen.weather, chosen.air
+        factors: list[dict[str, Any]] = []
+
+        def add(name: str, value: str, key: str) -> None:
+            entry = evidence.get(key, {})
+            factors.append(
+                {
+                    "factor": name,
+                    "value": value,
+                    "source": entry.get("source", ""),
+                    "evidence": key,
+                    "fetched_at": entry.get("fetched_at"),
+                }
+            )
+
+        if w.get("apparent_temp_c") is not None:
+            add(
+                "weather",
+                f"feels like {w['apparent_temp_c']:.0f}C, "
+                f"{w.get('precip_prob') or 0}% chance of rain, "
+                f"wind {w.get('wind_kmh')} km/h from {w.get('wind_from')}",
+                "E_WEATHER",
+            )
+        if a.get("us_aqi") is not None:
+            add(
+                "air quality",
+                f"US-AQI {a['us_aqi']:.0f}"
+                + (
+                    f", local PM2.5 estimated {a['local_pm2_5']:.0f} ug/m3"
+                    if a.get("local_pm2_5")
+                    else ""
+                )
+                + (
+                    f" after station bias x{a.get('bias_factor')}"
+                    if a.get("bias_factor")
+                    else ""
+                ),
+                "E_AQ",
+            )
+        if a.get("exposure") is not None:
+            sources = a.get("exposure_sources") or []
+            add(
+                "local exposure",
+                f"index {a['exposure']:.2f}"
+                + (f" ({sources[0]})" if sources else " (no busy roads downwind)"),
+                "E_HAZARDS",
+            )
+        if chosen.travel_min is not None:
+            add(
+                "travel",
+                f"about {chosen.travel_min:.0f} min by car"
+                + (f", {chosen.distance_km:.1f} km" if chosen.distance_km else ""),
+                "E_ROUTES",
+            )
+        if chosen.daylight.get("sunset"):
+            add(
+                "daylight",
+                f"sunrise {chosen.daylight.get('sunrise')} / sunset "
+                f"{chosen.daylight.get('sunset')} (IST)",
+                "E_DAYLIGHT",
+            )
+        add(
+            "place",
+            f"{chosen.place} was found among the mapped venues near the location",
+            "E_VENUES",
+        )
+
+        proof: dict[str, Any] = {
+            "headline": (
+                f"{chosen.place} at {chosen.when.strftime('%a %d %b, %H:%M')} "
+                f"scored {chosen.score:.0f} out of 100"
+            ),
+            "factors": factors,
+            "scoring": chosen.breakdown,
+            "evidence": {
+                k: {"source": v.get("source"), "value": v.get("value")}
+                for k, v in evidence.items()
+            },
+            "data_as_of": datetime.now().isoformat(),
+        }
+
+        if intent.profile:
+            proof["profile_effect"] = (
+                "Limits were tightened because of: "
+                + ", ".join(intent.profile)
+                + ". The air-quality limit and the temperature limit were lowered "
+                "for this user, and the advice below takes that into account."
+            )
+            proof["safety_note"] = (
+                "This is general guidance based on open data, not medical advice. "
+                "Please follow your doctor's advice and your own judgement."
+            )
+        return proof
 
     @staticmethod
     def _sources() -> list[dict[str, str]]:

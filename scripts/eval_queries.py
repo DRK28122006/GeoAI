@@ -45,6 +45,11 @@ async def main() -> None:
     live = "--live" in sys.argv
     from app.pipeline import pipeline
 
+    if live:
+        # The model is normally loaded by the FastAPI start-up hook. The
+        # harness calls the pipeline directly, so load it here.
+        pipeline.slm.load()
+
     for label, question in QUERIES:
         print(f"\n=== [{label}] {question}")
         show_window(question)

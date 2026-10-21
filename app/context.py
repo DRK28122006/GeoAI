@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import timedelta
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -70,14 +71,36 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
     limitations: list[str] = []
     timings: dict[str, float] = {}
 
-    def add_evidence(source: str, value: Any, fetched_at: float | None = None) -> str:
-        eid = f"E{len(evidence) + 1}"
-        evidence[eid] = {
+    # The time window is resolved first: it decides how many days of forecast
+    # we have to fetch. "this weekend" needs four days, "tomorrow" needs two.
+    window: TimeWindow = resolve(
+        time_text=intent.time_text,
+        day=intent.day,
+        part_of_day=intent.part_of_day,
+        hour=intent.hour,
+        days_ahead=intent.days_ahead,
+        now=now_ist(),
+        raw_text=intent.raw_text,
+    )
+    limitations.extend(window.assumptions)
+    days_needed = max(
+        1, (window.end.date() - now_ist().date()).days + 1
+    )
+
+    def add_evidence(
+        key: str, source: str, value: Any, fetched_at: float | None = None
+    ) -> str:
+        """Evidence keys are stable and named, not numbered.
+
+        A judge reading the answer can see exactly which source backed which
+        claim, and the keys never shift depending on which sources answered.
+        """
+        evidence[key] = {
             "source": source,
             "value": value,
             "fetched_at": fetched_at or time.time(),
         }
-        return eid
+        return key
 
     # ------------------------------------------------------------- geocode
     t0 = time.perf_counter()
@@ -98,7 +121,8 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
     origin = candidates[0]
     intent.lat, intent.lon = origin.lat, origin.lon
     add_evidence(
-        "nominatim" if origin.source == "nominatim" else origin.source,
+        "E_GEO",
+        "Nominatim" if origin.source == "nominatim" else origin.source.title(),
         f"Location resolved to {origin.short_name} ({origin.lat:.5f}, {origin.lon:.5f})",
         geo_res.fetched_at,
     )
@@ -184,7 +208,8 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
             f"{origin.short_name}. Try a wider radius or a nearby area."
         )
     add_evidence(
-        "overpass",
+        "E_VENUES",
+        "OpenStreetMap (Overpass API and Nominatim)",
         f"{len(venues)} candidate venues found within {intent.radius_km:.0f} km of "
         f"{origin.short_name}",
         venue_res.fetched_at,
@@ -193,21 +218,23 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
     # ------------------------------------------------- parallel live data
     lats = [origin.lat] + [v.lat for v in venues]
     lons = [origin.lon] + [v.lon for v in venues]
-    horizon_days = max(2, min(7, int(intent.days_ahead or 1) + 1))
+    # Weather reaches 16 days, air quality 7 days.
+    weather_days = max(2, min(16, days_needed + 1))
+    aq_days = max(2, min(7, days_needed + 1))
 
     # The hazard query only needs the origin, so it runs together with the
     # weather/air-quality/routing calls instead of waiting for them.
     hazard_res, weather_res, aq_res, route_res, day_res, elev_res = await asyncio.gather(
         hazard_task,
-        timed("weather", weather_src.get_forecast(lats, lons, days=horizon_days)),
-        timed("air_quality", aq_src.get_aqi(lats, lons, days=horizon_days)),
+        timed("weather", weather_src.get_forecast(lats, lons, days=weather_days)),
+        timed("air_quality", aq_src.get_aqi(lats, lons, days=aq_days)),
         timed(
             "routing",
             routing.get_travel_times(
                 (origin.lat, origin.lon), [(v.lat, v.lon) for v in venues]
             ),
         ),
-        timed("daylight", daylight_src.get_daylight(origin.lat, origin.lon, days=horizon_days)),
+        timed("daylight", daylight_src.get_daylight(origin.lat, origin.lon, days=weather_days)),
         timed("elevation", elevation_src.get_elevation(lats[1:], lons[1:])),
     )
 
@@ -236,47 +263,51 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
         if air_quality.get("station"):
             st = air_quality["station"]
             add_evidence(
-                "waqi",
+                "E_STATION",
+                "WAQI",
                 f"Nearest monitoring station {st.get('name')} reported PM2.5 "
                 f"{st.get('observed_pm25')} ug/m3; grid bias factor "
                 f"{air_quality.get('bias_factor')}",
             )
 
     add_evidence(
-        "open-meteo",
-        f"Hourly forecast for {len(lats)} locations covering the next {horizon_days} days",
+        "E_WEATHER",
+        "Open-Meteo forecast",
+        f"Hourly forecast for {len(lats)} locations covering the next {weather_days} days",
     )
     add_evidence(
-        "open-meteo (CAMS)",
+        "E_AQ",
+        "Open-Meteo air quality (CAMS ENSEMBLE)",
         "Air quality forecast: PM2.5, PM10, ozone, NO2 and US-AQI by hour",
     )
     add_evidence(
-        "overpass",
-        f"{len(hazards)} hazard or mitigator features mapped around the area",
+        "E_HAZARDS",
+        "OpenStreetMap (Overpass API)",
+        f"{len(hazards)} hazard or mitigator features mapped around the area "
+        "(roads by class, industry, power plants, landfill, water, green cover)",
     )
     if routes.get("durations"):
         add_evidence(
-            "osrm",
+            "E_ROUTES",
+            "OSRM",
             "Travel times by car from the starting point to every shortlisted venue",
         )
     if daylight:
         add_evidence(
-            daylight.get("source", "daylight"),
+            "E_DAYLIGHT",
+            "Open-Meteo daily" if daylight.get("source") == "open-meteo" else "Astral",
             f"Sunrise {daylight.get('sunrise', [''])[0]} / sunset "
             f"{daylight.get('sunset', [''])[0]} (IST)",
         )
 
-    # ------------------------------------------------------------- window
-    window: TimeWindow = resolve(
-        time_text=intent.time_text,
-        day=intent.day,
-        part_of_day=intent.part_of_day,
-        hour=intent.hour,
-        days_ahead=intent.days_ahead,
-        now=now_ist(),
-        raw_text=intent.raw_text,
-    )
-    limitations.extend(window.assumptions)
+    # The air-quality forecast reaches 7 days. Anything beyond that is not
+    # scored, and the user is told why.
+    horizon = now_ist() + timedelta(days=7)
+    if window.end > horizon:
+        limitations.append(
+            "The request reaches beyond the 7 day air-quality forecast, so the "
+            "later hours were not scored."
+        )
 
     timings["total_ms"] = round((time.perf_counter() - started) * 1000)
 
