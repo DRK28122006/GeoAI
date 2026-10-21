@@ -18,12 +18,13 @@ async def check_source(name, url, params=None):
             resp = await client.get(url, params=params)
             latency = (time.perf_counter() - start) * 1000
             if resp.status_code == 200:
-                print(f"PASS {latency:.1f}ms | Sample: {resp.text[:60].replace('\\n', ' ')}...")
+                sample = resp.text[:60].replace("\n", " ")
+                print(f"PASS {latency:.1f}ms | Sample: {sample}...")
                 return True
             else:
                 print(f"FAIL {resp.status_code} | {resp.text[:50]}")
                 return False
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - the smoke test reports every failure
         print(f"ERROR {type(e).__name__}: {e}")
         return False
 

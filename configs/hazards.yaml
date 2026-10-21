@@ -1,11 +1,107 @@
-hazards:
+# Hazard sources and mitigators for the geo-exposure engine.
+#
+# `overpass` entries are raw tag selectors used to build one Overpass query
+# around the user's location. `classes` describes how strongly each hazard
+# contributes to local pollution exposure and how quickly that effect decays
+# with distance.
+
+overpass:
+  - '["highway"~"^(motorway|trunk|primary|secondary)$"]'
+  - '["landuse"="industrial"]'
+  - '["power"="plant"]'
+  - '["man_made"="works"]'
+  - '["landuse"="landfill"]'
+  - '["natural"="water"]'
+  - '["waterway"~"^(river|canal|riverbank|dock)$"]'
+  - '["landuse"~"^(forest|grass|meadow)$"]'
+  - '["natural"~"^(wood|scrub|grassland)$"]'
+  - '["leisure"~"^(park|garden|nature_reserve)$"]'
+
+# class -> contribution weight, spatial decay length (m), rush-hour traffic factor
+classes:
+  motorway:
+    kind: road
+    weight: 1.00
+    length_scale_m: 800
+    traffic_rush: 1.30
+    traffic_normal: 0.75
+    traffic_night: 0.35
+  trunk:
+    kind: road
+    weight: 0.85
+    length_scale_m: 700
+    traffic_rush: 1.25
+    traffic_normal: 0.70
+    traffic_night: 0.30
+  primary:
+    kind: road
+    weight: 0.60
+    length_scale_m: 500
+    traffic_rush: 1.15
+    traffic_normal: 0.60
+    traffic_night: 0.25
+  secondary:
+    kind: road
+    weight: 0.40
+    length_scale_m: 400
+    traffic_rush: 0.95
+    traffic_normal: 0.50
+    traffic_night: 0.20
   industrial:
-    tags: ["landuse=industrial", "power=plant", "man_made=works"]
-    score: -2
-  traffic:
-    tags: ["highway=motorway", "highway=trunk", "highway=primary", "highway=secondary"]
-    score: -1
+    kind: industrial
+    weight: 0.90
+    length_scale_m: 2000
+    traffic_rush: 1.10
+    traffic_normal: 1.00
+    traffic_night: 0.85
+  power:
+    kind: power
+    weight: 0.70
+    length_scale_m: 1500
+    traffic_rush: 1.00
+    traffic_normal: 1.00
+    traffic_night: 1.00
+  landfill:
+    kind: landfill
+    weight: 0.60
+    length_scale_m: 1500
+    traffic_rush: 1.00
+    traffic_normal: 1.00
+    traffic_night: 0.95
+  water:
+    kind: water
+    weight: 0.00
+    length_scale_m: 300
+    traffic_rush: 1.00
+    traffic_normal: 1.00
+    traffic_night: 1.00
+  green:
+    kind: green
+    weight: 0.00
+    length_scale_m: 300
+    traffic_rush: 1.00
+    traffic_normal: 1.00
+    traffic_night: 1.00
+
+# Mitigators reduce exposure at a venue (water bodies and green cover).
 mitigators:
-  nature:
-    tags: ["natural=water", "waterway=*", "landuse=forest", "landuse=grass", "leisure=park"]
-    score: 1
+  water:
+    kind: water
+    radius_m: 400
+    max_reduction: 0.15
+  green:
+    kind: green
+    radius_m: 300
+    max_reduction: 0.12
+
+# Time-of-day traffic proxy (documented approximation - we have no live
+# traffic feed). Indian urban peaks: 08:00-11:00 and 17:00-21:00 IST.
+traffic_profile:
+  rush_hours: [[8, 11], [17, 21]]
+  day_hours: [[6, 8], [11, 17], [21, 23]]
+  night_hours: [[23, 6]]
+
+# Calmer air pools pollution; this is the calm_factor in the PRD.
+calm:
+  k: 0.8
+  reference_wind_mps: 5.0

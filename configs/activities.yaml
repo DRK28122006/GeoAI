@@ -1,21 +1,229 @@
+# Activity profiles.
+#
+# `overpass` entries are raw Overpass tag selectors (appended to an
+# `nwr(around:R,lat,lon)` statement). Everything else is consumed by the
+# geo-exposure engine in app/exposure_engine.py.
+#
+# Thresholds are documented engineering defaults (see README), not clinical
+# guidance. They are tuned to be conservative for Indian conditions.
+
+defaults: &defaults
+  limit: 80
+  shortlist: 12
+  comfort_band_c: [14, 28]
+  wind_sensitivity: medium      # low | medium | high | very_high
+  rain_tolerance: low           # very_low | low | medium
+  precip_prob_limit: 60         # % - hard disqualifier above this
+  temp_limit_c: 37              # apparent temperature hard limit
+  ventilation_weight: 2.0       # how much local PM2.5 matters for this activity
+  daylight_required: false
+  lit_ok: true                  # can a lit venue be used after dark
+  duration_min: 60
+  uv_limit: 9
+
 running:
+  <<: *defaults
+  label: "Running or jogging"
   radius_km: 5
-  tags:
-    - "leisure=pitch"
-    - "leisure=track"
-    - "leisure=park"
-    - "sport=*"
-    - "lit=yes"
-    - "surface=*"
-hiking:
-  radius_km: 20
-  tags:
-    - "natural=peak"
-    - "route=hiking"
-    - "highway=footway"
-photography:
+  comfort_band_c: [12, 26]
+  wind_sensitivity: medium
+  rain_tolerance: low
+  precip_prob_limit: 60
+  ventilation_weight: 3.0
+  daylight_required: false
+  lit_ok: true
+  duration_min: 45
+  overpass:
+    - '["leisure"~"^(track|fitness_track|running_track)$"]'
+    - '["sport"~"^(running|athletics|multi)$"]'
+    - '["leisure"="pitch"]["sport"~"^(athletics|running|football)$"]'
+    - '["leisure"="park"]'
+    - '["leisure"="sports_centre"]["sport"~"^(running|athletics)$"]'
+  accept_kinds: [track, pitch, park, sports_centre]
+  nominatim_terms: ["running track", "playground", "sports centre"]
+  avoid: ["main road crossings", "heavy traffic corridors"]
+
+cycling:
+  <<: *defaults
+  label: "Cycling (leisure or commute)"
+  radius_km: 8
+  comfort_band_c: [14, 30]
+  wind_sensitivity: high
+  rain_tolerance: low
+  precip_prob_limit: 50
+  temp_limit_c: 35
+  ventilation_weight: 2.5
+  duration_min: 60
+  overpass:
+    - '["highway"="cycleway"]'
+    - '["leisure"="park"]'
+    - '["leisure"="sports_centre"]["sport"~"^(cycling|bmx)$"]'
+    - '["sport"="cycling"]'
+    - '["tourism"="viewpoint"]'
+  accept_kinds: [cycleway, park, sports_centre, viewpoint, other]
+  nominatim_terms: ["cycleway", "park", "sports centre"]
+  avoid: ["main road crossings", "heavy traffic corridors"]
+
+golf:
+  <<: *defaults
+  label: "Golf"
+  radius_km: 40
+  comfort_band_c: [15, 31]
+  wind_sensitivity: very_high
+  rain_tolerance: low
+  precip_prob_limit: 40
+  temp_limit_c: 36
+  ventilation_weight: 1.2
+  daylight_required: true
+  duration_min: 240
+  overpass:
+    - '["leisure"="golf_course"]'
+    - '["leisure"="golf_course"]["golf"="yes"]'
+  accept_kinds: [golf_course]
+  nominatim_terms: ["golf course"]
+  avoid: ["thunderstorms", "strong gusts"]
+
+cricket:
+  <<: *defaults
+  label: "Cricket"
   radius_km: 10
-  tags:
-    - "tourism=viewpoint"
-    - "waterfront=yes"
-    - "leisure=park"
+  comfort_band_c: [18, 33]
+  wind_sensitivity: medium
+  rain_tolerance: very_low
+  precip_prob_limit: 40
+  temp_limit_c: 36
+  ventilation_weight: 2.0
+  lit_ok: true
+  duration_min: 120
+  overpass:
+    - '["leisure"="pitch"]["sport"~"^(cricket)$"]'
+    - '["leisure"="pitch"]["sport"="cricket"]'
+    - '["sport"="cricket"]'
+    - '["leisure"="sports_centre"]["sport"~"^(cricket)$"]'
+  accept_kinds: [pitch, sports_centre]
+  nominatim_terms: ["cricket pitch", "sports centre", "playground"]
+  avoid: ["wet pitches", "high wind"]
+
+football:
+  <<: *defaults
+  label: "Outdoor football or five-a-side"
+  radius_km: 8
+  comfort_band_c: [15, 29]
+  wind_sensitivity: low
+  rain_tolerance: low
+  precip_prob_limit: 50
+  ventilation_weight: 2.5
+  lit_ok: true
+  duration_min: 90
+  overpass:
+    - '["leisure"="pitch"]["sport"~"^(soccer|football|futsal)$"]'
+    - '["leisure"="pitch"]["sport"="multi"]'
+    - '["leisure"="sports_centre"]["sport"~"^(soccer|football)$"]'
+    - '["sport"~"^(soccer|football)$"]'
+  accept_kinds: [pitch, sports_centre]
+  nominatim_terms: ["football pitch", "sports centre", "playground"]
+  avoid: ["wet pitches", "dust"]
+
+tennis:
+  <<: *defaults
+  label: "Outdoor tennis"
+  radius_km: 8
+  comfort_band_c: [15, 30]
+  wind_sensitivity: high
+  rain_tolerance: very_low
+  precip_prob_limit: 35
+  ventilation_weight: 1.8
+  lit_ok: true
+  duration_min: 90
+  overpass:
+    - '["leisure"="tennis_court"]'
+    - '["leisure"="sports_centre"]["sport"="tennis"]'
+    - '["sport"="tennis"]'
+  accept_kinds: [tennis_court, sports_centre]
+  nominatim_terms: ["tennis court", "sports centre"]
+  avoid: ["wind above play threshold", "rain"]
+
+hiking:
+  <<: *defaults
+  label: "Hiking or nature walk"
+  radius_km: 20
+  comfort_band_c: [12, 28]
+  wind_sensitivity: medium
+  rain_tolerance: low
+  precip_prob_limit: 40
+  temp_limit_c: 32
+  ventilation_weight: 1.8
+  daylight_required: true
+  duration_min: 180
+  overpass:
+    - '["route"="hiking"]'
+    - '["natural"="peak"]'
+    - '["tourism"="viewpoint"]'
+    - '["highway"~"^(path|footway|steps|bridleway)$"]'
+    - '["leisure"="nature_reserve"]'
+  accept_kinds: [trail, peak, viewpoint, park]
+  nominatim_terms: ["trail", "viewpoint", "nature reserve"]
+  avoid: ["thunderstorms", "poor visibility", "sunset after dark"]
+
+picnic:
+  <<: *defaults
+  label: "Picnic or park outing"
+  radius_km: 8
+  comfort_band_c: [18, 31]
+  wind_sensitivity: medium
+  rain_tolerance: very_low
+  precip_prob_limit: 35
+  temp_limit_c: 34
+  ventilation_weight: 1.0
+  lit_ok: false
+  duration_min: 120
+  overpass:
+    - '["leisure"~"^(park|garden|recreation_ground|picnic_site)$"]'
+    - '["tourism"="picnic_site"]'
+    - '["leisure"="park"]["natural"="water"]'
+  accept_kinds: [park, picnic_site, waterfront, garden]
+  nominatim_terms: ["park", "garden", "picnic site"]
+  avoid: ["rain", "strong wind", "no shade"]
+
+event:
+  <<: *defaults
+  label: "Outdoor event or gathering"
+  radius_km: 10
+  comfort_band_c: [20, 32]
+  wind_sensitivity: medium
+  rain_tolerance: very_low
+  precip_prob_limit: 30
+  temp_limit_c: 35
+  ventilation_weight: 1.0
+  lit_ok: true
+  duration_min: 180
+  overpass:
+    - '["leisure"~"^(park|garden|recreation_ground)$"]'
+    - '["place"~"^(square|square)$"]'
+    - '["amenity"~"^(community_centre|school|college|festival_ground)$"]'
+    - '["tourism"="attraction"]'
+  accept_kinds: [park, community_centre, other]
+  nominatim_terms: ["park", "community centre", "maidan"]
+  avoid: ["rain (no plan B)", "extreme heat", "unshaded midday"]
+
+photography:
+  <<: *defaults
+  label: "Outdoor photography session"
+  radius_km: 12
+  comfort_band_c: [10, 34]
+  wind_sensitivity: low
+  rain_tolerance: medium
+  precip_prob_limit: 55
+  temp_limit_c: 36
+  ventilation_weight: 1.0
+  duration_min: 90
+  overpass:
+    - '["tourism"="viewpoint"]'
+    - '["natural"="peak"]'
+    - '["leisure"~"^(park|garden)$"]'
+    - '["natural"="water"]'
+    - '["waterway"~"^(river|canal|riverbank)$"]'
+  accept_kinds: [viewpoint, peak, park, waterfront]
+  nominatim_terms: ["viewpoint", "waterfront", "park", "lake"]
+  avoid: ["heavy rain", "thick haze"]
+  prefer: ["golden hour", "blue hour", "sunset direction"]

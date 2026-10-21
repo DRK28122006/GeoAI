@@ -2,7 +2,7 @@
 name = "geoai-outdoor-assistant"
 version = "0.1.0"
 description = "Backend for GeoAI Outdoor Assistant"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
@@ -12,7 +12,20 @@ dependencies = [
     "diskcache",
     "PyYAML",
     "astral",
+    "llama-cpp-python==0.3.19",
+    "python-dotenv",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "respx",
+    "ruff",
+]
+
+[tool.setuptools]
+packages = ["app", "app.sources"]
 
 [tool.ruff]
 line-length = 88

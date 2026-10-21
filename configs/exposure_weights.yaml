@@ -1,21 +1,58 @@
-weights:
-  air_quality:
-    very_poor: -10
-    poor: -5
-    fair: 0
-    good: 2
-  temperature:
-    extreme_cold: -5
-    extreme_heat: -5
-    moderate: 2
-  weather:
-    rain: -3
-    storm: -10
-    clear: 2
-  hazards:
-    industrial: -5
-    traffic: -3
-  mitigators:
-    nature: 5
-    park: 5
-    waterfront: 3
+# Soft-score weights (0-100 scale) and category bands.
+# The engine is fully deterministic: no SLM is involved in any of this.
+
+score_weights:
+  comfort: 22        # apparent temperature / humidity fit
+  air: 30            # local PM2.5 + O3
+  wind_rain: 18      # wind fit and rain probability
+  daylight: 12       # daylight / lighting fit
+  travel: 18         # travel-time penalty
+  hazard: 20         # residual downwind exposure penalty (subtracted)
+
+# US AQI bands (CPCB-aligned breakpoints for the Indian scale).
+aqi_bands:
+  good: {max: 50, score: 100}
+  satisfactory: {max: 100, score: 82}
+  moderate: {max: 200, score: 55}
+  poor: {max: 300, score: 30}
+  very_poor: {max: 500, score: 10}
+  severe: {max: 1000, score: 0}
+
+# Comfort score shape: how the apparent temperature maps to a 0-1 comfort fit.
+comfort:
+  perfect_band: 0.15   # fraction of the activity band that is "ideal"
+  penalty_per_degree: 0.06
+  humidity_penalty_above: 70
+  humidity_penalty_per_pct: 0.02
+
+wind:
+  # speed at which the activity becomes uncomfortable (km/h)
+  comfortable_kmh:
+    running: 24
+    cycling: 18
+    golf: 14
+    cricket: 20
+    football: 26
+    tennis: 16
+    hiking: 24
+    picnic: 20
+    event: 22
+    photography: 30
+  gust_penalty_factor: 1.6
+
+rain:
+  precip_prob_penalty: 0.6   # per 10% probability
+
+daylight:
+  golden_hour_before_sunset_min: 60
+  blue_hour_after_sunset_min: 25
+
+travel:
+  # penalty per minute of travel, scaled by activity duration
+  penalty_per_min: 0.55
+  max_travel_min: 45
+
+exposure:
+  beta: 0.9              # how strongly local exposure inflates PM2.5
+  max_exposure: 3.0      # cap so one bad road cannot dominate
+  bias_clamp: [0.5, 2.0]
