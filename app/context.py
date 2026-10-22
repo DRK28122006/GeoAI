@@ -145,15 +145,20 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
             limitations.append(
                 f"'{intent.location_text}' matches places in more than one country; "
                 f"used '{origin.short_name}'. Other matches: "
-                + ", ".join(c.short_name for c in others)
+                + ", ".join(
+                    dict.fromkeys(c.short_name for c in others)
+                )
                 + "."
             )
         else:
+            others = []
+            for c in candidates[1:5]:
+                if c.short_name != origin.short_name and c.short_name not in others:
+                    others.append(c.short_name)
             limitations.append(
                 f"Multiple places match '{intent.location_text}'; used "
-                f"'{origin.short_name}'. Other matches: "
-                + ", ".join(c.short_name for c in candidates[1:4])
-                + "."
+                f"'{origin.short_name}'."
+                + (f" Other matches: {', '.join(others)}." if others else "")
             )
 
     # -------------------------------------------------------------- venues

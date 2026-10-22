@@ -32,7 +32,7 @@ KIND_WEIGHT: dict[str, float] = {
     "neighbourhood": 6.0,
     "quarter": 5.5,
     "borough": 5.0,
-    "village": 5.0,
+    "village": 3.5,
     "municipality": 4.5,
     "district": 4.5,
     "town": 4.0,
@@ -43,8 +43,22 @@ KIND_WEIGHT: dict[str, float] = {
     "state": 2.0,
     "region": 2.0,
     "poi": 1.0,
+    "station": 0.8,
+    "commercial": 0.8,
     "address": 0.8,
     "building": 0.2,
+}
+
+# When a place name is shared by a village and a city district, the one in
+# the well known city is what the user means. "Andheri" is a village in
+# Punjab and a suburb of Mumbai.
+MAJOR_CITIES = {
+    "mumbai", "pune", "bengaluru", "bangalore", "delhi", "new delhi", "chennai",
+    "hyderabad", "kolkata", "nagpur", "jaipur", "ahmedabad", "surat", "indore",
+    "lucknow", "bhopal", "patna", "noida", "gurugram", "gurgaon", "kochi",
+    "coimbatore", "visakhapatnam", "varanasi", "agra", "kanpur", "thiruvananthapuram",
+    "mysuru", "mysore", "hubballi", "hubli", "dharwad", "kolhapur", "nasik",
+    "nashik", "vadodara", "rajkot", "ludhiana", "amritsar", "dehradun", "shimla",
 }
 
 COUNTRIES = {
@@ -82,9 +96,15 @@ class GeocodeCandidate(BaseModel):
     kind: str = "unknown"
     importance: float = 0.0
     country_code: str = ""
+    city: str = ""
 
     def rank(self) -> float:
         score = KIND_WEIGHT.get(self.kind, 1.0) + 1.5 * math.log10(1 + self.importance)
+        # A place in a well known city beats a village with the same name.
+        # The city has to be the address's own city, not a district name
+        # that happens to contain it.
+        if self.city and self.city.lower() in MAJOR_CITIES:
+            score += 4.0
         # "Whitefield" exists in the UK and in Bengaluru. When the question
         # does not name a country, prefer the Indian match - this assistant
         # is aimed at Indian cities - and the response states the assumption.
@@ -126,7 +146,7 @@ class GeocodeSource(BaseSource):
                 source=self.name, ok=False, params={"q": query}, error="empty location"
             )
 
-        params = {"q": query, "format": "json", "addressdetails": 1, "limit": 8}
+        params = {"q": query, "format": "json", "addressdetails": 1, "limit": 20}
         cache_key = f"geo:{query.lower()}"
 
         async def _fetch(self_src: BaseSource):
@@ -189,9 +209,10 @@ class GeocodeSource(BaseSource):
                 )
                 for item in resp.json() or []:
                     address = item.get("address") or {}
+                    display = item.get("display_name", "")
                     name = (item.get("name") or "").strip()
                     if not name:
-                        name = item.get("display_name", "").split(",")[0].strip()
+                        name = display.split(",")[0].strip()
                     locality = (
                         address.get("city")
                         or address.get("town")
@@ -201,10 +222,27 @@ class GeocodeSource(BaseSource):
                         or address.get("state")
                         or ""
                     )
+                    # Label the result with the part of the address the user
+                    # actually asked for. Searching "Hinjewadi" otherwise
+                    # answers with the name of a college in Hinjewadi.
+                    label = None
+                    for part in (p.strip() for p in display.split(",")):
+                        if part and part.lower() in query.lower():
+                            label = part
+                            break
+                    if not label and query.lower() in display.lower():
+                        label = query.strip()
+                    if not label:
+                        label = (
+                            address.get("suburb")
+                            or address.get("neighbourhood")
+                            or address.get("city_district")
+                            or name
+                        )
                     short = (
-                        f"{name}, {locality}"
-                        if locality and locality != name
-                        else name
+                        f"{label}, {locality}"
+                        if locality and locality != label
+                        else label
                     )
                     candidates.append(
                         GeocodeCandidate(
@@ -217,6 +255,12 @@ class GeocodeSource(BaseSource):
                             kind=item.get("type") or item.get("category") or "unknown",
                             importance=float(item.get("importance") or 0.0),
                             country_code=(address.get("country_code") or "").lower(),
+                            city=(
+                                address.get("city")
+                                or address.get("town")
+                                or address.get("municipality")
+                                or ""
+                            ),
                         )
                     )
             except Exception as exc:  # noqa: BLE001 - fall through
