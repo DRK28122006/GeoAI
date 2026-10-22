@@ -15,7 +15,9 @@ Credit: Open-Meteo, CAMS ENSEMBLE data (Copernicus/ECMWF).
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.config import settings
 from app.sources.base import BaseSource, SourceResult
@@ -97,7 +99,15 @@ class AQSource(BaseSource):
             raise RuntimeError("station has no PM2.5 reading")
 
         hourly = forecast.get("hourly", {}) if isinstance(forecast, dict) else {}
-        grid_pm25 = (hourly.get("pm2_5") or [None])[0]
+        # The station reads the air right now, so the grid value has to be the
+        # one for the current hour and not the first hour of the day.
+        times = hourly.get("time") or []
+        now_hour = datetime.now(ZoneInfo(settings.TIMEZONE)).strftime("%Y-%m-%dT%H")
+        index = next(
+            (i for i, t in enumerate(times) if str(t)[:13] == now_hour),
+            0,
+        )
+        grid_pm25 = (hourly.get("pm2_5") or [None])[index]
         if not grid_pm25:
             raise RuntimeError("forecast has no PM2.5 value")
 

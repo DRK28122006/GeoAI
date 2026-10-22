@@ -21,13 +21,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml README.md ./
 RUN pip install --upgrade pip \
     && pip install cmake ninja \
-    && CMAKE_ARGS="-DGGML_NATIVE=ON -DLLAMA_CURL=OFF" \
+    && CMAKE_ARGS="-DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_F16C=ON -DGGML_FMA=ON -DLLAMA_CURL=OFF" \
        pip install --no-binary llama-cpp-python "llama-cpp-python==0.3.19" \
     && pip install fastapi "uvicorn[standard]" httpx "pydantic>=2.0" \
        pydantic-settings diskcache PyYAML astral python-dotenv
 
 COPY app/ ./app/
-COPY configs/ ./configs/
 COPY scripts/ ./scripts/
 
 # Model weights (1.1 GB). Baking them into the image means the container

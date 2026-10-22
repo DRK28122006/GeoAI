@@ -26,6 +26,10 @@ logging.basicConfig(level=settings.LOG_LEVEL)
 logger = logging.getLogger("geoai.sources")
 
 
+class SourceUnavailable(RuntimeError):
+    """The source could not be reached, as opposed to having no answer."""
+
+
 class SourceResult(BaseModel, Generic[T]):
     source: str
     ok: bool
@@ -39,9 +43,14 @@ class SourceResult(BaseModel, Generic[T]):
 
 
 class CircuitBreaker:
-    """Trip after N consecutive failures, recover after a cool-down."""
+    """Trip after N consecutive failures, recover after a cool-down.
 
-    def __init__(self, failure_threshold: int = 3, recovery_timeout: int = 60):
+    The cool-down is deliberately short: a breaker that stays open for a
+    minute turns one flaky source into a minute of failed questions about
+    places that have nothing to do with the failure.
+    """
+
+    def __init__(self, failure_threshold: int = 3, recovery_timeout: int = 15):
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.failures = 0
@@ -64,17 +73,43 @@ class CircuitBreaker:
 
 GLOBAL_LIMITERS: dict[str, asyncio.Semaphore] = {}
 GLOBAL_BREAKERS: dict[str, CircuitBreaker] = {}
+# Minimum seconds between two calls to the same source. Nominatim asks for no
+# more than one request a second and starts answering 429 when it is pushed.
+GLOBAL_MIN_INTERVAL: dict[str, float] = {}
+GLOBAL_NEXT_CALL: dict[str, float] = {}
 app_cache = Cache(settings.CACHE_DIR)
 
 FAILURE_CACHE_TTL = 60
 
 
 class BaseSource:
-    def __init__(self, name: str, rate_limit: int | None = None):
+    def __init__(
+        self,
+        name: str,
+        rate_limit: int | None = None,
+        min_interval: float = 0.0,
+    ):
         self.name = name
         if rate_limit:
-            GLOBAL_LIMITERS[name] = asyncio.Semaphore(rate_limit)
+            # One semaphore for the life of the process: creating a new one on
+            # every request would let two requests through at once.
+            GLOBAL_LIMITERS.setdefault(name, asyncio.Semaphore(rate_limit))
+        if min_interval:
+            GLOBAL_MIN_INTERVAL[name] = min_interval
         GLOBAL_BREAKERS.setdefault(name, CircuitBreaker())
+
+    async def _pace(self) -> None:
+        """Wait until this source is allowed to be called again."""
+        interval = GLOBAL_MIN_INTERVAL.get(self.name, 0.0)
+        if not interval:
+            return
+        loop = asyncio.get_running_loop()
+        while True:
+            wait = GLOBAL_NEXT_CALL.get(self.name, 0.0) - loop.time()
+            if wait <= 0:
+                break
+            await asyncio.sleep(wait)
+        GLOBAL_NEXT_CALL[self.name] = loop.time() + interval
 
     @property
     def headers(self) -> dict[str, str]:
@@ -111,6 +146,7 @@ class BaseSource:
                 try:
                     if limiter:
                         async with limiter:
+                            await self._pace()
                             resp = await client.request(
                                 method,
                                 url,
@@ -120,6 +156,7 @@ class BaseSource:
                                 headers=merged_headers,
                             )
                     else:
+                        await self._pace()
                         resp = await client.request(
                             method,
                             url,
@@ -136,6 +173,11 @@ class BaseSource:
                     if attempt == retries:
                         break
                     wait = 2**attempt
+                    if getattr(exc, "response", None) is not None and (
+                        exc.response.status_code == 429
+                    ):
+                        # the source is asking us to slow down
+                        wait = max(wait, 5)
                     logger.warning(
                         "Retry %s/%s for %s after %ss (%s)",
                         attempt + 1,

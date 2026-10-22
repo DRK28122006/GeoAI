@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from astral import LocationInfo
+from astral import Observer
 from astral.sun import sun
 
 from app.config import settings
@@ -50,8 +51,8 @@ class DaylightSource(BaseSource):
                 }
             except Exception as exc:  # noqa: BLE001 - offline fallback
                 logger.warning("Open-Meteo daylight failed, using astral: %s", exc)
-                city = LocationInfo(lat, lon, "Local", "UTC", 5.5)
-                s = sun(city)
+                observer = Observer(latitude=lat, longitude=lon)
+                s = sun(observer, tzinfo=ZoneInfo(settings.TIMEZONE))
                 return {
                     "source": "astral",
                     "dates": [s["sunrise"].date().isoformat()],

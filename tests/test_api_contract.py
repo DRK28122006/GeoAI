@@ -130,6 +130,7 @@ def _bundle(activity: str = "running", profile: list[str] | None = None):
 @pytest.fixture
 def stubbed(monkeypatch):
     """Replace the model and the network with deterministic stand-ins."""
+    monkeypatch.setattr(main_module.slm, "is_ready", lambda: True)
     async def fake_parse(self, question, now_iso):
         return {
             "activity": "running",
@@ -156,6 +157,14 @@ def test_health_reports_the_model(stubbed):
     assert body["status"] == "ok"
     assert "model" in body
     assert body["model"]["model"] == "Qwen/Qwen3-1.7B"
+
+
+def test_health_fails_when_the_model_is_not_loaded(monkeypatch):
+    """A health check that stays green while the model is dead is useless."""
+    monkeypatch.setattr(main_module.slm, "is_ready", lambda: False)
+    resp = CLIENT.get("/health")
+    assert resp.status_code == 503
+    assert resp.json()["status"] == "degraded"
 
 
 def test_sources_lists_attribution(stubbed):
@@ -251,3 +260,58 @@ def test_a_broken_source_does_not_produce_a_500(stubbed, monkeypatch):
     body = resp.json()
     assert body["status"] == "partial"
     assert "error" in body or "limitations" in body
+
+
+def test_a_profile_is_only_applied_when_the_question_mentions_it():
+    """The model used to invent a profile and the answer claimed it.
+
+    A profile tightens the limits and can disqualify venues, so it has to
+    come from the question, not from the model.
+    """
+    from app.pipeline import Pipeline
+
+    parsed = {
+        "activity": "running",
+        "location": "JP Nagar",
+        "day": "tomorrow",
+        "part_of_day": "morning",
+        "hour": None,
+        "profile": ["senior"],  # the model made this up
+        "out_of_scope": False,
+    }
+    intent = Pipeline()._normalise(
+        parsed, "Where can I go running tomorrow near JP Nagar?"
+    )
+    assert intent.profile == []
+
+    intent = Pipeline()._normalise(
+        parsed, "Where can I go running tomorrow near JP Nagar with my parents?"
+    )
+    assert intent.profile == ["senior"]
+
+    intent = Pipeline()._normalise(
+        parsed, "Where can I go running tomorrow near JP Nagar with mild asthma?"
+    )
+    assert intent.profile == ["asthma"]
+
+
+def test_the_activity_comes_from_the_question_not_the_model():
+    """The model once read a 'morning walk' as a football match."""
+    from app.pipeline import Pipeline
+
+    parsed = {
+        "activity": "football",
+        "location": "JP Nagar",
+        "day": "tomorrow",
+        "part_of_day": "morning",
+        "hour": None,
+        "profile": [],
+        "out_of_scope": False,
+    }
+    pipe = Pipeline()
+    assert pipe._normalise(parsed, "a good place for a morning walk near JP Nagar").activity == "running"
+    assert pipe._normalise(parsed, "a cricket match near JP Nagar").activity == "cricket"
+    assert pipe._normalise(parsed, "five-a-side football near JP Nagar").activity == "football"
+    assert pipe._normalise(parsed, "a nature walk near Lonavala").activity == "hiking"
+    # nothing to go on: the model's answer is kept
+    assert pipe._normalise(parsed, "somewhere good today").activity == "football"

@@ -96,16 +96,14 @@ INTENT_SCHEMA: dict[str, Any] = {
     ],
 }
 
+# The engine writes the proof (the reasons with their evidence), so the
+# model only has to produce the sentence a person reads and the practical
+# advice. That keeps the prompt small, which matters on a CPU.
 CHOICE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "slot_id": {"type": "string", "maxLength": 24},
-        "headline": {"type": "string", "maxLength": 120},
-        "why": {
-            "type": "array",
-            "items": {"type": "string", "maxLength": 110},
-            "maxItems": 3,
-        },
+        "headline": {"type": "string", "maxLength": 140},
         "carry": {
             "type": "array",
             "items": {"type": "string", "maxLength": 70},
@@ -116,9 +114,9 @@ CHOICE_SCHEMA: dict[str, Any] = {
             "items": {"type": "string", "maxLength": 80},
             "maxItems": 4,
         },
-        "avoid_note": {"type": "string", "maxLength": 110},
+        "avoid_note": {"type": "string", "maxLength": 120},
     },
-    "required": ["slot_id", "headline", "why", "carry", "watch_for", "avoid_note"],
+    "required": ["slot_id", "headline", "carry", "watch_for", "avoid_note"],
 }
 
 PARSER_SYSTEM = """You turn a question about an outdoor activity into structured data.
@@ -205,8 +203,8 @@ class SLM:
             self._load_error = str(exc)
             return False
 
-    @property
-    def ready(self) -> bool:
+    def is_ready(self) -> bool:
+        """True when the model can answer a request right now."""
         if self.backend == "server":
             return self._server_ready()
         return self._llm is not None
@@ -216,7 +214,7 @@ class SLM:
             "backend": self.backend,
             "model": settings.SLM_BASE_MODEL,
             "model_path": self.model_path if self.backend == "inprocess" else None,
-            "loaded": self.ready,
+            "loaded": self.is_ready(),
             "loaded_at": self._loaded_at,
             "error": self._load_error,
             "params": "2.03B (1.7B non-embedding) - under the 3B limit",
@@ -329,13 +327,10 @@ class SLM:
             f"exposure {o.get('exposure')}"
             for o in options
         )
-        # Keep the prompt small: on CPU every extra token costs time.
-        ev = "\n".join(
-            f"{eid}: {str(val.get('value'))[:90]}"
-            for eid, val in list(evidence.items())[:8]
-        )
-        user = f"Options:\n{table}\n\nEvidence:\n{ev}\n\nQuestion: {question[:300]}"
-        return self._complete_json(CHOOSER_SYSTEM, user, CHOICE_SCHEMA, max_tokens=260)
+        # The prompt is kept small on purpose: every token costs time on a
+        # CPU, and the facts the model needs are all in the table.
+        user = f"Options:\n{table}\n\nQuestion: {question[:200]}"
+        return self._complete_json(CHOOSER_SYSTEM, user, CHOICE_SCHEMA, max_tokens=190)
 
 
 slm = SLM()

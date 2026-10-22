@@ -1,7 +1,13 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "geoai-outdoor-assistant"
 version = "0.1.0"
 description = "Backend for GeoAI Outdoor Assistant"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "fastapi",
@@ -22,10 +28,16 @@ dev = [
     "pytest-asyncio",
     "respx",
     "ruff",
+    "huggingface-hub[cli]",
 ]
 
 [tool.setuptools]
 packages = ["app", "app.sources"]
+
+[tool.setuptools.package-data]
+# The activity, profile, hazard and weight files are part of the package:
+# without them an installed copy cannot start.
+app = ["configs/*.yaml"]
 
 [tool.ruff]
 line-length = 88

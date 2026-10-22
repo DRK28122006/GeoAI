@@ -36,9 +36,23 @@ command -v huggingface-cli >/dev/null 2>&1 || command -v hf >/dev/null 2>&1 || {
 
 CLI="$(command -v huggingface-cli || command -v hf)"
 
+# Pre-flight: the repository has to be a copy of the base model, otherwise
+# from_pretrained will not work on it.
+if "$CLI" api "$REPO" --json 2>/dev/null | grep -q '"config.json"'; then
+    echo "the repository already has a config.json, good"
+else
+    echo "the repository does not look like a copy of the base model yet."
+    echo "duplicate https://huggingface.co/Qwen/Qwen3-1.7B first, then run this again."
+    exit 1
+fi
+
 echo "uploading the model card to $REPO"
 "$CLI" upload "$REPO" "$HERE/README.md" --repo-type model \
     --commit-message "model card for the GeoAI outdoor assistant"
+
+echo "uploading the serving configuration"
+"$CLI" upload "$REPO" "$HERE/serving_config.json" --repo-type model \
+    --commit-message "serving configuration"
 
 echo "uploading the GGUF build we serve"
 "$CLI" upload "$REPO" "$ROOT/models/Qwen3-1.7B-Q4_K_M.gguf" --repo-type model \

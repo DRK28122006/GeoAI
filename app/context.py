@@ -16,6 +16,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.config import settings
+from app.exposure_engine import haversine_km
 from app.planner import TimeWindow, now_ist, resolve
 from app.sources.airquality import AQSource
 from app.sources.daylight import DaylightSource
@@ -29,7 +31,7 @@ logger = logging.getLogger("geoai.context")
 
 
 def _activity_config(activity: str) -> dict:
-    """Read one activity block from configs/activities.yaml."""
+    """Read one activity block from the activity config."""
     import yaml
 
     from app.config import CONFIG_DIR
@@ -108,11 +110,22 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
     timings["geocode_ms"] = round((time.perf_counter() - t0) * 1000)
     status["geocode"] = geo_res.ok
     if not geo_res.ok or not geo_res.data:
-        return {
-            "error": (
+        unavailable = bool(geo_res.error) and (
+            "breaker" in str(geo_res.error).lower()
+            or "timeout" in str(geo_res.error).lower()
+            or "429" in str(geo_res.error)
+        )
+        message = (
+            f"The place lookup service is busy right now, so I could not resolve "
+            f"'{intent.location_text}'. Please try again in a moment."
+            if unavailable
+            else (
                 f"I could not find the location '{intent.location_text}'. "
                 "Try a nearby neighbourhood, landmark or city name."
-            ),
+            )
+        )
+        return {
+            "error": message,
             "source_status": status,
             "limitations": [f"Geocoding failed: {geo_res.error}"],
         }
@@ -154,16 +167,13 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
         timings[f"{name}_ms"] = round((time.perf_counter() - t) * 1000)
         return res
 
-    # The hazard lookup only needs the origin, so it starts here and runs
-    # while the venue queries are in flight.
-    hazard_task = asyncio.create_task(
-        timed("hazards", overpass.get_hazards(origin.lat, origin.lon, radius_km=2.5))
-    )
-
     place_label = intent.location_text or origin.short_name
     place_label = place_label.split(",")[0].strip() or origin.short_name
     act_cfg = _activity_config(intent.activity)
-    nom_terms = act_cfg.get("nominatim_terms", [])
+    # Only the first two terms are tried: Nominatim throttles us above one
+    # request a second and the venue list is only a safety net for Overpass.
+    nom_terms = act_cfg.get("nominatim_terms", [])[:2]
+    nom_types = act_cfg.get("nominatim_types", [])
 
     t0 = time.perf_counter()
     # Two independent venue sources run together and are merged: Overpass has
@@ -173,7 +183,12 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
             intent.activity, origin.lat, origin.lon, intent.radius_km
         ),
         geo.search_venues(
-            nom_terms, place_label, origin.lat, origin.lon, intent.radius_km
+            nom_terms,
+            place_label,
+            origin.lat,
+            origin.lon,
+            intent.radius_km,
+            accept_types=nom_types,
         ),
     )
     timings["venues_ms"] = round((time.perf_counter() - t0) * 1000)
@@ -224,19 +239,81 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
 
     # The hazard query only needs the origin, so it runs together with the
     # weather/air-quality/routing calls instead of waiting for them.
-    hazard_res, weather_res, aq_res, route_res, day_res, elev_res = await asyncio.gather(
-        hazard_task,
-        timed("weather", weather_src.get_forecast(lats, lons, days=weather_days)),
-        timed("air_quality", aq_src.get_aqi(lats, lons, days=aq_days)),
+    # The hazard lookup is centred on the cluster of shortlisted venues rather
+    # than on the user's own point, so a venue two kilometres away still gets
+    # the roads that surround it.
+    if venues:
+        hazard_lat = sum(v.lat for v in venues) / len(venues)
+        hazard_lon = sum(v.lon for v in venues) / len(venues)
+        spread_km = max(
+            haversine_km((hazard_lat, hazard_lon), (v.lat, v.lon)) for v in venues
+        )
+    else:
+        hazard_lat, hazard_lon = origin.lat, origin.lon
+        spread_km = 0.0
+    hazard_radius_km = min(4.0, max(2.5, spread_km + 1.0))
+    if spread_km + 0.5 > hazard_radius_km:
+        limitations.append(
+            f"The venues are spread over {spread_km:.0f} km, so the map features "
+            f"around them were only mapped out to {hazard_radius_km:.0f} km."
+        )
+    hazard_task = asyncio.create_task(
         timed(
-            "routing",
-            routing.get_travel_times(
-                (origin.lat, origin.lon), [(v.lat, v.lon) for v in venues]
-            ),
-        ),
-        timed("daylight", daylight_src.get_daylight(origin.lat, origin.lon, days=weather_days)),
-        timed("elevation", elevation_src.get_elevation(lats[1:], lons[1:])),
+            "hazards",
+            overpass.get_hazards(hazard_lat, hazard_lon, radius_km=hazard_radius_km),
+        )
     )
+
+    # Every source gets its own deadline and the whole group gets one too:
+    # a slow upstream must not turn the answer into a minute long wait.
+    tasks = {
+        "hazards": hazard_task,
+        "weather": asyncio.create_task(
+            timed("weather", weather_src.get_forecast(lats, lons, days=weather_days))
+        ),
+        "air_quality": asyncio.create_task(
+            timed("air_quality", aq_src.get_aqi(lats, lons, days=aq_days))
+        ),
+        "routing": asyncio.create_task(
+            timed(
+                "routing",
+                routing.get_travel_times(
+                    (origin.lat, origin.lon), [(v.lat, v.lon) for v in venues]
+                ),
+            )
+        ),
+        "daylight": asyncio.create_task(
+            timed(
+                "daylight",
+                daylight_src.get_daylight(origin.lat, origin.lon, days=weather_days),
+            )
+        ),
+        "elevation": asyncio.create_task(
+            timed("elevation", elevation_src.get_elevation(lats[1:], lons[1:]))
+        ),
+    }
+    done, pending = await asyncio.wait(
+        tasks.values(), timeout=settings.CONTEXT_DEADLINE_S
+    )
+    for name, task in tasks.items():
+        if task in pending:
+            task.cancel()
+            logger.warning("source %s did not answer in time", name)
+    results = {
+        name: (task.result() if task in done else None)
+        for name, task in tasks.items()
+    }
+    hazard_res = results["hazards"]
+    weather_res = results["weather"]
+    aq_res = results["air_quality"]
+    route_res = results["routing"]
+    day_res = results["daylight"]
+    elev_res = results["elevation"]
+    if pending:
+        limitations.append(
+            "Some live sources were too slow to answer in time, so the answer "
+            "uses only the data that arrived."
+        )
 
     for name, res in (
         ("overpass_hazards", hazard_res),

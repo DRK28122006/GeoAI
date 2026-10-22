@@ -30,17 +30,36 @@ from app.verifier import Verifier
 
 logger = logging.getLogger("geoai.pipeline")
 
+# The words that decide the activity. A small model misreads them often
+# enough to matter - it once turned a "morning walk" into a football match -
+# so the question wins and the model fills the gaps.
 ACTIVITY_KEYWORDS: dict[str, list[str]] = {
-    "running": ["run", "running", "jog", "jogging", "dash", "walk", "walking"],
-    "cycling": ["cycle", "cycling", "bike", "biking", "ride", "riding", "bicycle"],
+    "running": [
+        "run", "running", "jog", "jogging", "dash", "walk", "walking", "stroll",
+        "morning walk", "evening walk", "walk in the park",
+    ],
+    "cycling": [
+        "cycle", "cycling", "bike", "biking", "ride", "riding", "bicycle",
+        "commute by bike",
+    ],
     "golf": ["golf", "golfing", "tee off"],
-    "cricket": ["cricket", "batting", "gully"],
-    "football": ["football", "soccer", "futsal", "five-a-side", "5-a-side", "five a side"],
+    "cricket": ["cricket", "batting", "gully", "cricket match", "cricket pitch"],
+    "football": [
+        "football", "soccer", "futsal", "five-a-side", "5-a-side", "five a side",
+    ],
     "tennis": ["tennis", "badminton", "singles", "doubles"],
-    "hiking": ["hike", "hiking", "trek", "trekking", "trail", "nature walk", "walk in the"],
+    "hiking": [
+        "hike", "hiking", "trek", "trekking", "trail", "nature walk",
+        "hill walk", "mountain walk",
+    ],
     "picnic": ["picnic", "outing", "park day", "lunch in the park"],
-    "event": ["party", "event", "wedding", "fair", "festival", "gathering", "birthday", "meeting outdoors"],
-    "photography": ["photo", "photos", "photography", "photograph", "sunset shot", "shoot"],
+    "event": [
+        "party", "event", "wedding", "fair", "festival", "gathering",
+        "birthday", "meeting outdoors",
+    ],
+    "photography": [
+        "photo", "photos", "photography", "photograph", "sunset shot", "shoot",
+    ],
 }
 
 PROFILE_KEYWORDS: dict[str, list[str]] = {
@@ -189,14 +208,37 @@ class Pipeline:
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.-")
         return cleaned
 
+    @staticmethod
+    def _activity_from_words(question: str) -> str | None:
+        """The activity the question actually names, if it names one."""
+        q = question.lower()
+        best: tuple[int, str] | None = None
+        for act, words in ACTIVITY_KEYWORDS.items():
+            for word in words:
+                if word in q and (best is None or len(word) > best[0]):
+                    best = (len(word), act)
+        # A single letter or a very short word is not a reliable signal.
+        if best and best[0] >= 4:
+            return best[1]
+        return None
+
     def _normalise(self, parsed: dict[str, Any], question: str) -> Intent:
-        activity = parsed.get("activity") or "other"
+        activity = (
+            self._activity_from_words(question) or parsed.get("activity") or "other"
+        )
         location = self._clean_place(parsed.get("location") or "")
         if location.lower() in {"none", "unknown", "n/a", "na", "null", "-"}:
             location = ""
-        profiles = [
-            p for p in (parsed.get("profile") or []) if p and p != "none"
-        ]
+        # The profile comes from the words in the question. The model is
+        # allowed to suggest one, but it is only used when the question
+        # actually mentions it: an invented profile would tighten the limits
+        # and disqualify venues for a person who was never mentioned.
+        mentioned = {
+            p
+            for p, words in PROFILE_KEYWORDS.items()
+            if any(w in question.lower() for w in words)
+        }
+        profiles = sorted(mentioned)
         # Radius, time text, intent type and the missing-field list are derived
         # deterministically: the model's job is the language, not the calendar.
         radius = self._extract_radius(question)
@@ -290,8 +332,8 @@ class Pipeline:
 
         if not intent.location_text and intent.lat is None:
             return self._needs_clarification(
-                "Which area should I look around? Tell me a neighbourhood, landmark or city "
-                "(for example: Jayanagar in Bengaluru, or near Koregaon Park in Pune).",
+                "Which area should I look around? Tell me a neighbourhood, a landmark or "
+                "a city, for example the name of the area you are in.",
                 parsed,
             )
 
@@ -317,7 +359,8 @@ class Pipeline:
                 "evidence": {},
                 "map_geojson": {"type": "FeatureCollection", "features": []},
                 "data_as_of": started.isoformat(),
-                "sources": [],
+                "sources": self._sources(),
+                "attribution": bundle.get("attribution", ""),
                 "limitations": bundle.get("limitations", []),
                 "timings_ms": {},
                 "answer": bundle["error"],
@@ -325,7 +368,7 @@ class Pipeline:
 
         # ---------------------------------------------------------- engine
         engine_result = self.engine.score(bundle)
-        top_slots = engine_result.slots[:5]
+        top_slots = engine_result.slots[:3]
 
         # Nothing passed the hard constraints. That is a real answer, not a
         # failure: say why, and offer the least bad option with the caveat.
@@ -383,12 +426,14 @@ class Pipeline:
                 "map_geojson": self._geojson(bundle, engine_result.all_slots[:8]),
                 "data_as_of": started.isoformat(),
                 "sources": self._sources(),
+                "attribution": bundle.get("attribution", ""),
                 "limitations": _dedupe(
                     bundle.get("limitations", []) + reasons[:5]
                 ),
                 "timings_ms": {**bundle.get("timings", {}), **stage},
                 "answer": "\n".join(body),
                 "verified": True,
+                "answer_source": "template",
             }
 
         if not engine_result.slots:
@@ -399,7 +444,7 @@ class Pipeline:
             )
             extra = bundle.get("limitations", [])
             if extra:
-                note += " " + " ".join(extra)
+                note += " What happened: " + " ".join(extra[:2])
             return {
                 "status": "partial",
                 "clarification_question": None,
@@ -471,8 +516,10 @@ class Pipeline:
             # deterministic fallback: every line comes from the engine
             answer_text = self._template(chosen, engine_result, bundle)
             verification = Verifier().verify("", facts)
+            answer_source = "template"
         else:
             answer_text = self._compose(chosen, choice, top_slots, engine_result, bundle)
+            answer_source = "model"
 
         return {
             "status": "ok" if verification.verified else "partial",
@@ -486,7 +533,7 @@ class Pipeline:
                 "time": chosen.when.isoformat(),
                 "time_label": chosen.time_label,
                 "score": chosen.score,
-                "why": (choice or {}).get("why", []) or self._template_why(chosen),
+                "why": self._template_why(chosen),
                 "breakdown": chosen.breakdown,
                 "weather": chosen.weather,
                 "air": chosen.air,
@@ -517,11 +564,13 @@ class Pipeline:
             "map_geojson": self._geojson(bundle, engine_result.slots[:8]),
             "data_as_of": started.isoformat(),
             "sources": self._sources(),
+            "attribution": bundle.get("attribution", ""),
             "limitations": bundle.get("limitations", [])
             + verification.violations,
             "timings_ms": {**bundle.get("timings", {}), **stage},
             "answer": answer_text,
             "verified": verification.verified,
+            "answer_source": answer_source,
         }
 
     # ------------------------------------------------------------- helpers
@@ -593,9 +642,10 @@ class Pipeline:
                 f"{chosen.when.strftime('%a %d %b')}."
             )
         parts = [headline.strip()]
-        why = (choice or {}).get("why") or []
-        for reason in why[:3]:
-            parts.append(f"- {reason.strip()}")
+        # The reasons come from the engine, so each one carries the value we
+        # fetched and the source it came from.
+        for reason in self._template_why(chosen):
+            parts.append(f"- {reason}")
         carry = (choice or {}).get("carry") or []
         if carry:
             parts.append("Carry: " + ", ".join(str(c) for c in carry[:4]) + ".")
@@ -823,7 +873,11 @@ class Pipeline:
     @staticmethod
     def _sources() -> list[dict[str, str]]:
         return [
-            {"name": "OpenStreetMap contributors (Overpass API, Nominatim)", "role": "venues, hazards, roads, water, green cover", "license": "ODbL"},
+            {
+                "name": "© OpenStreetMap contributors (Overpass API, Nominatim)",
+                "role": "venues, hazards, roads, water, green cover",
+                "license": "ODbL",
+            },
             {"name": "Open-Meteo forecast API", "role": "hourly weather", "license": "CC BY 4.0"},
             {"name": "Open-Meteo air quality (CAMS ENSEMBLE, Copernicus/ECMWF)", "role": "PM2.5, PM10, ozone, NO2, US-AQI", "license": "CC BY 4.0"},
             {"name": "WAQI (World Air Quality Index project)", "role": "nearby station PM2.5 for grid bias correction", "license": "CC BY 4.0"},

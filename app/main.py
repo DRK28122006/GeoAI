@@ -11,12 +11,14 @@ GET  /sources   data sources, versions and attributions
 from __future__ import annotations
 
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -76,14 +78,25 @@ class AskRequest(BaseModel):
 
 
 @app.get("/health")
-async def health() -> dict[str, Any]:
-    return {
-        "status": "ok",
-        "model": slm.status(),
+async def health() -> Any:
+    """Liveness. Reports 503 when the model is not loaded.
+
+    A health check that stays green while the assistant is dead is worse
+    than no health check at all, so the container healthcheck and any
+    external monitor can see the failure.
+    """
+    model = slm.status()
+    ready = slm.is_ready()
+    body = {
+        "status": "ok" if ready else "degraded",
+        "model": model,
         "cache_entries": len(app_cache),
         "timestamp": time.time(),
         "timezone": settings.TIMEZONE,
     }
+    if not ready:
+        return JSONResponse(status_code=503, content=body)
+    return body
 
 
 @app.get("/sources")
@@ -104,11 +117,36 @@ async def sources() -> dict[str, Any]:
     }
 
 
+# The model runs on one thread, so a burst of questions has to queue. A
+# request that would wait too long is turned away with a clear message
+# rather than timing out in front of a judge.
+IN_FLIGHT = 0
+MAX_IN_FLIGHT = int(os.getenv("MAX_IN_FLIGHT", "4"))
+
+
 @app.post("/ask")
 async def ask(request: AskRequest) -> dict[str, Any]:
+    global IN_FLIGHT
     question = request.text()
     if not question:
         return {"status": "needs_clarification", "answer": "Please ask a question."}
+    if IN_FLIGHT >= MAX_IN_FLIGHT:
+        return {
+            "status": "busy",
+            "answer": (
+                "The assistant is answering other questions right now. Please try "
+                "again in a few seconds."
+            ),
+            "retry_after_seconds": 5,
+        }
+    IN_FLIGHT += 1
+    try:
+        return await _run_ask(request, question)
+    finally:
+        IN_FLIGHT -= 1
+
+
+async def _run_ask(request: AskRequest, question: str) -> dict[str, Any]:
     try:
         result = await pipeline.run(question, lat=request.lat, lon=request.lon)
     except Exception as exc:

@@ -40,7 +40,8 @@ running:
     - '["leisure"="park"]'
     - '["leisure"="sports_centre"]["sport"~"^(running|athletics)$"]'
   accept_kinds: [track, pitch, park, sports_centre]
-  nominatim_terms: ["running track", "playground", "sports centre"]
+  nominatim_terms: ["running track", "playground", "sports centre", "fitness track"]
+  nominatim_types: ["track", "fitness_track", "park", "playground", "sports_centre"]
   avoid: ["main road crossings", "heavy traffic corridors"]
 
 cycling:
@@ -61,7 +62,8 @@ cycling:
     - '["sport"="cycling"]'
     - '["tourism"="viewpoint"]'
   accept_kinds: [cycleway, park, sports_centre, viewpoint, other]
-  nominatim_terms: ["cycleway", "park", "sports centre"]
+  nominatim_terms: ["cycleway", "sports centre", "park"]
+  nominatim_types: ["cycleway", "park", "sports_centre"]
   avoid: ["main road crossings", "heavy traffic corridors"]
 
 golf:
@@ -80,7 +82,8 @@ golf:
     - '["leisure"="golf_course"]'
     - '["leisure"="golf_course"]["golf"="yes"]'
   accept_kinds: [golf_course]
-  nominatim_terms: ["golf course"]
+  nominatim_terms: ["golf course", "golf park"]
+  nominatim_types: ["golf_course"]
   avoid: ["thunderstorms", "strong gusts"]
 
 cricket:
@@ -101,7 +104,8 @@ cricket:
     - '["sport"="cricket"]'
     - '["leisure"="sports_centre"]["sport"~"^(cricket)$"]'
   accept_kinds: [pitch, sports_centre]
-  nominatim_terms: ["cricket pitch", "sports centre", "playground"]
+  nominatim_terms: ["cricket pitch", "cricket ground", "sports centre"]
+  nominatim_types: ["pitch", "sports_centre", "playground"]
   avoid: ["wet pitches", "high wind"]
 
 football:
@@ -121,7 +125,8 @@ football:
     - '["leisure"="sports_centre"]["sport"~"^(soccer|football)$"]'
     - '["sport"~"^(soccer|football)$"]'
   accept_kinds: [pitch, sports_centre]
-  nominatim_terms: ["football pitch", "sports centre", "playground"]
+  nominatim_terms: ["football pitch", "five a side football", "sports centre"]
+  nominatim_types: ["pitch", "sports_centre", "playground"]
   avoid: ["wet pitches", "dust"]
 
 tennis:
@@ -141,6 +146,7 @@ tennis:
     - '["sport"="tennis"]'
   accept_kinds: [tennis_court, sports_centre]
   nominatim_terms: ["tennis court", "sports centre"]
+  nominatim_types: ["tennis_court", "sports_centre"]
   avoid: ["wind above play threshold", "rain"]
 
 hiking:
@@ -162,7 +168,8 @@ hiking:
     - '["highway"~"^(path|footway|steps|bridleway)$"]'
     - '["leisure"="nature_reserve"]'
   accept_kinds: [trail, peak, viewpoint, park]
-  nominatim_terms: ["trail", "viewpoint", "nature reserve"]
+  nominatim_terms: ["trekking trail", "viewpoint", "nature reserve"]
+  nominatim_types: ["trail", "viewpoint", "peak", "nature_reserve"]
   avoid: ["thunderstorms", "poor visibility", "sunset after dark"]
 
 picnic:
@@ -182,7 +189,8 @@ picnic:
     - '["tourism"="picnic_site"]'
     - '["leisure"="park"]["natural"="water"]'
   accept_kinds: [park, picnic_site, waterfront, garden]
-  nominatim_terms: ["park", "garden", "picnic site"]
+  nominatim_terms: ["picnic site", "garden", "park"]
+  nominatim_types: ["park", "garden", "picnic_site"]
   avoid: ["rain", "strong wind", "no shade"]
 
 event:
@@ -203,7 +211,8 @@ event:
     - '["amenity"~"^(community_centre|school|college|festival_ground)$"]'
     - '["tourism"="attraction"]'
   accept_kinds: [park, community_centre, other]
-  nominatim_terms: ["park", "community centre", "maidan"]
+  nominatim_terms: ["maidan", "community centre", "garden"]
+  nominatim_types: ["park", "community_centre", "square"]
   avoid: ["rain (no plan B)", "extreme heat", "unshaded midday"]
 
 photography:
@@ -224,6 +233,7 @@ photography:
     - '["natural"="water"]'
     - '["waterway"~"^(river|canal|riverbank)$"]'
   accept_kinds: [viewpoint, peak, park, waterfront]
-  nominatim_terms: ["viewpoint", "waterfront", "park", "lake"]
+  nominatim_terms: ["viewpoint", "waterfront", "lake", "park"]
+  nominatim_types: ["viewpoint", "peak", "park", "waterfront"]
   avoid: ["heavy rain", "thick haze"]
   prefer: ["golden hour", "blue hour", "sunset direction"]

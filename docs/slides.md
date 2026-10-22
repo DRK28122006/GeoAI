@@ -117,7 +117,7 @@ Nothing is ideal in that window. The best of the options is Football Turf around
 | Model | **Qwen3-1.7B** (`Qwen/Qwen3-1.7B`), 2.03B params, Apache-2.0 |
 | Under the 3B cap | yes, 2.03B including embeddings |
 | Served by | llama.cpp (`llama-cpp-python` 0.3.19), Q4_K_M, CPU, 4 threads |
-| Speed here | 167 tok/s prompt, 17.4 tok/s generation |
+| Speed here | 167 tok/s prompt, 17 tok/s generation, 5-9 tok/s under a JSON grammar |
 | Fine-tuning | **none** — the base model is used unchanged, as the rulebook allows |
 
 **Two calls, nothing else.** The parser extracts activity, place, day, part of day and profile. The chooser picks a slot and writes the reason.
@@ -125,7 +125,7 @@ Nothing is ideal in that window. The best of the options is Football Turf around
 **Three things keep it honest:**
 1. **Grammar-constrained decoding** — the JSON schema is compiled to a GBNF grammar, so the output is always structurally valid.
 2. **A rule-based verifier** — every number, clock time, place name and evidence citation in the model's wording is checked against the fetched bundle. A failure triggers one regeneration, then a deterministic template built from the same data.
-3. **The user's wording wins** — the calendar and the profile match are computed in code, so when the model misreads "in the next two days" as "next weekend", the code overrides it. There is a test for exactly that.
+3. **The user's wording wins** — the calendar, the activity and the profile match are all computed in code from the question itself, so when the model misreads "in the next two days" as "next weekend", or a "morning walk" as a football match, or invents a health condition nobody mentioned, the code overrides it. There is a test for each of those.
 
 The model has no memory of weather or geography, and it is never allowed to state a fact it was not given.
 
@@ -137,7 +137,7 @@ The model has no memory of weather or geography, and it is never allowed to stat
 - **No live traffic feed.** Travel time is OSRM car routing plus a documented time-of-day multiplier per road class. It is an approximation and we label it as one.
 - **OSM coverage is uneven.** In smaller towns there may be no mapped venues at all. We say so and suggest widening the radius instead of inventing a place.
 - **Overpass can be at capacity.** The public mirrors throttle under load. We run a second venue source in parallel and cache failures briefly. The proper fix is a Geofabrik regional extract, which the rulebook allows, and it is the next thing we would build.
-- **Latency is 10 to 60 seconds** on a laptop CPU, depending on how the free APIs are behaving. The model itself contributes about 15 seconds of that.
+- **Latency is 20 to 60 seconds** on a laptop CPU, depending on how the free APIs are behaving. The live data takes 8 to 25 seconds of that and the model 8 to 20. We cache aggressively and every source has its own deadline, so a slow upstream degrades the answer instead of stalling it.
 - **The model is small.** It misreads unusual phrasings occasionally. We compensate deterministically where we can, but a stronger parser would help.
 - **Profiles are conservative thresholds, not medical guidance.** Every profile-adjusted answer says so.
 

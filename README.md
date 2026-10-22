@@ -34,6 +34,15 @@ curl -L -o models/Qwen3-1.7B-Q4_K_M.gguf \
 uvicorn app.main:app --host 0.0.0.0 --port 7860
 ```
 
+```bash
+curl -s -X POST localhost:7860/ask -H 'Content-Type: application/json' \
+  -d '{"question":"Where can I go running tomorrow evening near Koregaon Park in Pune?"}'
+```
+
+**Live API:** `https://<your-host>/ask` — set this to the hosted endpoint once it
+is deployed.
+**Model on Hugging Face:** `https://huggingface.co/<your-org>/geoai-outdoor-assistant`
+
 Then:
 
 ```bash
@@ -140,13 +149,13 @@ hazard lines, so a map can render the answer without another lookup.
 
 All ten required activities are supported, each with its own comfort band, wind
 sensitivity, rain tolerance, ventilation weight, daylight rules and OSM tag profile
-(`configs/activities.yaml`):
+(`app/configs/activities.yaml`):
 
 running, cycling, golf, cricket, football, tennis, hiking, picnic, outdoor event,
 outdoor photography.
 
 Personal profiles tighten the limits and change the advice
-(`configs/profiles.yaml`): asthma, senior, child, pregnancy. Every profile-adjusted
+(`app/configs/profiles.yaml`): asthma, senior, child, pregnancy. Every profile-adjusted
 answer says which limits were tightened and carries a "not medical advice" note.
 
 ---
@@ -206,6 +215,25 @@ LoRA adapter, model card, open licence) so that it loads with `from_pretrained(.
   is used.
 - **Privacy:** user queries are not stored. Only aggregate counters and debug logs are
   kept, and the local cache holds public API responses.
+- **Third-party libraries.** Every dependency is permissive and compatible with
+  Apache-2.0:
+
+  | Library | Licence | Used for |
+  | --- | --- | --- |
+  | FastAPI | MIT | the HTTP API |
+  | Uvicorn | BSD-3 | the ASGI server |
+  | httpx | BSD-3 | the HTTP client |
+  | Pydantic, pydantic-settings | MIT | validation and settings |
+  | Starlette | BSD-3 | the ASGI framework under FastAPI |
+  | diskcache | Apache-2.0 | the response cache |
+  | PyYAML | MIT | the activity and profile configuration |
+  | Astral | Apache-2.0 | the offline sunrise and sunset fallback |
+  | llama-cpp-python | MIT | running the model |
+  | Jinja2 | BSD-3 | the chat template |
+  | NumPy | BSD-3 | pulled in by llama-cpp-python |
+  | anyio, certifi, httptools, idna, sniffio, urllib3 | MIT, MIT, MIT, MPL-2.0, MIT, MIT | transitive |
+  | uvloop, watchfiles, websockets, python-dotenv | MIT, MIT, BSD-3, BSD-3 | server extras and configuration |
+  | pytest, pytest-asyncio, respx, ruff | MIT, Apache-2.0, BSD-3, MIT | development only |
 
 ---
 
@@ -237,7 +265,7 @@ app/
   verifier.py         grounding checks + fact table
   pipeline.py         orchestration and the response contract
   sources/            geocode, overpass, weather, airquality, routing, daylight, elevation
-configs/              activities.yaml, profiles.yaml, hazards.yaml, exposure_weights.yaml
+app/configs/          activities.yaml, profiles.yaml, hazards.yaml, exposure_weights.yaml
 tests/                unit tests
 scripts/              eval_queries.py, model_server.sh, smoke_test.py
 ```

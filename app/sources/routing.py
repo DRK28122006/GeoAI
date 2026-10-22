@@ -8,6 +8,7 @@ flagged as a limitation in the response.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
@@ -37,7 +38,13 @@ class RoutingSource(BaseSource):
         ]
         url = f"https://router.project-osrm.org/table/v1/driving/{';'.join(coords)}"
         params = {"sources": "0", "annotations": "duration,distance"}
-        cache_key = f"route:{origin[0]:.4f},{origin[1]:.4f}:{len(dests)}:{dests[0]}"
+        # The key has to identify the whole destination set: two different
+        # shortlists of the same length would otherwise share a cache entry
+        # and get each other's travel times.
+        dest_key = hashlib.sha1(
+            ";".join(f"{la:.5f},{lo:.5f}" for la, lo in dests).encode()
+        ).hexdigest()[:16]
+        cache_key = f"route:{origin[0]:.4f},{origin[1]:.4f}:{dest_key}"
 
         async def _fetch(self_src: BaseSource):
             resp = await self_src._request("GET", url, params=params, timeout=20)
@@ -48,8 +55,11 @@ class RoutingSource(BaseSource):
             distances = (body.get("distances") or [[]])[0]
             return {
                 "source": "osrm",
-                "durations": [float(d) for d in durations[1:] if d is not None],
-                "distances": [float(d) for d in distances[1:] if d is not None],
+                # A null means the pair is not reachable by car. The positions
+                # have to be kept, otherwise every later venue would be given
+                # the travel time of the wrong destination.
+                "durations": [None if d is None else float(d) for d in durations[1:]],
+                "distances": [None if d is None else float(d) for d in distances[1:]],
             }
 
         return await self.fetch(cache_key, settings.TTL_ROUTING, _fetch, params)

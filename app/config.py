@@ -18,15 +18,18 @@ from pathlib import Path
 from pydantic_settings import BaseSettings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_DIR = REPO_ROOT / "configs"
+# The configs are shipped inside the package so an installed copy works, and
+# the repository copy is used when running from a checkout.
+CONFIG_DIR = Path(__file__).resolve().parent / "configs"
+if not CONFIG_DIR.is_dir():
+    CONFIG_DIR = REPO_ROOT / "configs"
 
 
 class Settings(BaseSettings):
     # --- API keys (optional; the assistant degrades gracefully without them) ---
-    WAQI_TOKEN: str = os.getenv("WAQI_TOKEN", "")
-    OPENAQ_API_KEY: str = os.getenv("OPENAQ_API_KEY", "")
-    DATA_GOV_IN_KEY: str = os.getenv("DATA_GOV_IN_KEY", "")
-    ORS_API_KEY: str = os.getenv("ORS_API_KEY", "")
+    # WAQI gives us a real monitoring station reading, which corrects the
+    # coarse air-quality grid. It is the only key the app reads.
+    WAQI_TOKEN: str = ""
 
     # NOTE: the contact string ends up in the User-Agent. Overpass blocks any
     # UA containing a placeholder domain ("example.com"): it answers 403 on
@@ -64,6 +67,9 @@ class Settings(BaseSettings):
     DEFAULT_TIMEOUT: float = float(os.getenv("DEFAULT_TIMEOUT", "12.0"))
     OVERPASS_TIMEOUT: float = float(os.getenv("OVERPASS_TIMEOUT", "18.0"))
     MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "2"))
+    # The whole live-data stage gets this long. Past it the answer is built
+    # from whatever arrived, with a limitation note.
+    CONTEXT_DEADLINE_S: float = float(os.getenv("CONTEXT_DEADLINE_S", "30"))
 
     # --- Cache TTLs (seconds) ---
     # Bump this when a source changes shape, so stale entries are not reused.

@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+httpx
+pydantic>=2.0
+pydantic-settings
+diskcache
+PyYAML
+astral
+llama-cpp-python==0.3.19
+python-dotenv
+
+[dev]
+pytest
+pytest-asyncio
+respx
+ruff
+huggingface-hub[cli]

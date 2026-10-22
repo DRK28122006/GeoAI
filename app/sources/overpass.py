@@ -164,7 +164,10 @@ class OverpassSource(BaseSource):
         parts = "\n".join(
             f'  nwr(around:{radius_m},{lat:.5f},{lon:.5f}){sel};' for sel in selectors
         )
-        query = f"[out:json][timeout:30];(\n{parts}\n);\nout center tags {act.get('limit', 60)};"
+        # The element limit is applied by the server, so a low limit would
+        # throw away most of the candidates before the ranking sees them. We
+        # ask for a generous number and cut the shortlist in python.
+        query = f"[out:json][timeout:30];(\n{parts}\n);\nout center tags {act.get('limit', 1500)};"
         cache_key = f"venues:{activity}:{lat:.4f}:{lon:.4f}:{radius_m}"
 
         async def _fetch(self_src: BaseSource):
@@ -279,12 +282,16 @@ class OverpassSource(BaseSource):
             sel('nwr(around:%d,%.5f,%.5f)["leisure"~"^(park|garden|nature_reserve)$"]'),
         ]
         q_hazard = (
-            "[out:json][timeout:20];(\n  " + ";\n  ".join(hazard_sel) + ";\n);\nout geom tags 120;"
+            "[out:json][timeout:20];(\n  "
+            + ";\n  ".join(hazard_sel)
+            + ";\n);\nout geom tags 800;"
         )
         cache_key = f"hazards:{lat:.4f}:{lon:.4f}:{radius_m}"
 
         async def _fetch(self_src: OverpassSource):
             data = await self_src._run(q_hazard)
+            if data is None:
+                raise RuntimeError("all Overpass mirrors failed")
             hazards: list[Hazard] = []
             if data:
                 for el in data.get("elements", []):

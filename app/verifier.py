@@ -23,9 +23,29 @@ UNIT_NUMBER = re.compile(
     r"(°\s*c|celsius|%|ug/m3|µg/m3|aqi|km/h|kmh|km|min|mins|minutes|m\b|hours?|h\b)?",
     re.IGNORECASE,
 )
+# A clock time only counts when it is written like one: "09:00", "6 pm",
+# "at 8". A bare number is not a time - "23 Oct", "12 percent" and "5 min"
+# are dates, percentages and durations.
 CLOCK = re.compile(
-    r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|AM|PM)?\b|\b(\d{1,2}):(\d{2})\b"
+    r"(?<!\d)(\d{1,2}):(\d{2})(?!\d)|(?<!\w)(\d{1,2})\s*(am|pm|AM|PM)(?!\w)|(?<=\bat\s)(\d{1,2})(?!\d)"
 )
+MONTHS = (
+    "jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|"
+    "january|february|march|april|june|july|august|september|october|"
+    "november|december|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|"
+    "monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+)
+# A date is not a data claim. These are removed before the numbers are
+# checked, so "23 Oct" and "out of 100" are not mistaken for measurements.
+DATE_NUMBER = re.compile(
+    rf"\b\d{{1,2}}(?:st|nd|rd|th)?\s+(?:{MONTHS})\b|\b\d{{1,2}}/\d{{1,2}}\b",
+    re.IGNORECASE,
+)
+OUT_OF = re.compile(r"\bout of\s+\d+\b", re.IGNORECASE)
+# "92/100" is a score on a scale, so only the score is a claim and the
+# denominator is not.
+SCORE_FRACTION = re.compile(r"\b(\d{1,3})\s*/\s*100\b")
+
 DATEISH = re.compile(
     r"\b(today|tomorrow|tonight|this weekend|next weekend|monday|tuesday|wednesday|"
     r"thursday|friday|saturday|sunday|morning|afternoon|evening|night|dawn|dusk|"
@@ -77,7 +97,11 @@ class Verifier:
         checked = {"numbers": 0, "times": 0, "places": 0}
 
         # ------------------------------------------------------------ numbers
-        for match in UNIT_NUMBER.finditer(text):
+        # Dates and "out of 100" are stripped first: they are not claims
+        # about the data.
+        scannable = DATE_NUMBER.sub(" ", OUT_OF.sub("out of", text))
+        scannable = SCORE_FRACTION.sub(r"\1", scannable)
+        for match in UNIT_NUMBER.finditer(scannable):
             raw = match.group(1)
             unit = (match.group(2) or "").strip().lower()
             try:
@@ -100,10 +124,11 @@ class Verifier:
             if groups[0] is not None:
                 hour = int(groups[0])
                 minute = int(groups[1] or 0)
-                meridiem = (groups[2] or "").lower()
-            elif groups[3] is not None:
-                hour = int(groups[3])
-                minute = int(groups[4] or 0)
+            elif groups[2] is not None:
+                hour = int(groups[2])
+                meridiem = (groups[3] or "").lower()
+            elif groups[4] is not None:
+                hour = int(groups[4])
             if hour is None:
                 continue
             if meridiem == "pm" and hour < 12:

@@ -1,0 +1,22 @@
+Metadata-Version: 2.4
+Name: geoai-outdoor-assistant
+Version: 0.1.0
+Summary: Backend for GeoAI Outdoor Assistant
+License-Expression: Apache-2.0
+Requires-Python: <3.13,>=3.11
+Requires-Dist: fastapi
+Requires-Dist: uvicorn[standard]
+Requires-Dist: httpx
+Requires-Dist: pydantic>=2.0
+Requires-Dist: pydantic-settings
+Requires-Dist: diskcache
+Requires-Dist: PyYAML
+Requires-Dist: astral
+Requires-Dist: llama-cpp-python==0.3.19
+Requires-Dist: python-dotenv
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-asyncio; extra == "dev"
+Requires-Dist: respx; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Requires-Dist: huggingface-hub[cli]; extra == "dev"
