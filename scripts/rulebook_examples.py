@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Run the ten example questions from the rulebook and print the results.
 
     python scripts/rulebook_examples.py

@@ -349,12 +349,17 @@ class SLM:
     def choose(
         self, question: str, options: list[dict[str, Any]], evidence: dict[str, Any]
     ) -> dict[str, Any]:
+        def number(value, digits=0):
+            if value is None:
+                return "?"
+            return round(float(value), digits)
+
         table = "\n".join(
-            f"{o['slot_id']} | {o['place']} | {o['time']} | score {o['score']} | "
-            f"temp {o.get('apparent_temp_c')}C | AQI {o.get('us_aqi')} | "
-            f"precip {o.get('precip_prob')}% | wind {o.get('wind_kmh')}km/h from "
-            f"{o.get('wind_dir')} | travel {o.get('travel_min')} min | "
-            f"exposure {o.get('exposure')}"
+            f"{o['slot_id']} | {o['place']} | {o['time']} | score {number(o['score'])} | "
+            f"temp {number(o.get('apparent_temp_c'))}C | AQI {number(o.get('us_aqi'))} | "
+            f"precip {number(o.get('precip_prob'))}% | wind {number(o.get('wind_kmh'))}km/h from "
+            f"{o.get('wind_dir')} | travel {number(o.get('travel_min'))} min | "
+            f"exposure {number(o.get('exposure'), 2)}"
             for o in options
         )
         # The prompt is kept small on purpose: every token costs time on a

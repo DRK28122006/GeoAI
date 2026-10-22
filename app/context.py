@@ -248,10 +248,17 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
     # than on the user's own point, so a venue two kilometres away still gets
     # the roads that surround it.
     if venues:
-        hazard_lat = sum(v.lat for v in venues) / len(venues)
-        hazard_lon = sum(v.lon for v in venues) / len(venues)
+        # Centre the hazard lookup on the venues a person could actually go
+        # to, not on every candidate. A venue twenty minutes away is a
+        # different answer from the one round the corner.
+        ranked = sorted(
+            venues, key=lambda v: haversine_km((origin.lat, origin.lon), (v.lat, v.lon))
+        )
+        near = ranked[: max(3, min(len(ranked), 6))]
+        hazard_lat = sum(v.lat for v in near) / len(near)
+        hazard_lon = sum(v.lon for v in near) / len(near)
         spread_km = max(
-            haversine_km((hazard_lat, hazard_lon), (v.lat, v.lon)) for v in venues
+            haversine_km((hazard_lat, hazard_lon), (v.lat, v.lon)) for v in near
         )
     else:
         hazard_lat, hazard_lon = origin.lat, origin.lon

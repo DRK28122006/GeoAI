@@ -190,7 +190,9 @@ class OverpassSource(BaseSource):
                 kind = self_src._classify(tags)
                 name = tags.get("name") or tags.get("operator") or None
                 if not name:
-                    name = f"Unnamed {kind.replace('_', ' ')}"
+                    # Honest about what we know: the feature type is known,
+                    # its name is not in OpenStreetMap.
+                    name = f"{kind.replace('_', ' ').capitalize()} (no name in OpenStreetMap)"
                 venues.append(
                     Venue(
                         id=f"{el.get('type', 'node')}/{el.get('id')}",
