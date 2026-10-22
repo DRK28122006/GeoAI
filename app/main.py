@@ -10,13 +10,15 @@ GET  /sources   data sources, versions and attributions
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -37,11 +39,20 @@ async def lifespan(app: FastAPI):
     # Load the model at start-up so the first request of the judging window
     # does not pay for it (PRD success criterion S6).
     if settings.SLM_EAGER_LOAD:
-        ok = await __import__("asyncio").get_running_loop().run_in_executor(
-            None, slm.load
-        )
+        loop = asyncio.get_running_loop()
+        ok = await loop.run_in_executor(None, slm.load)
         logger.info("Model preloaded: %s", ok)
-    yield
+        if not ok:
+            # The service still starts and still answers, using the rule
+            # based parser and the template, but /health reports it.
+            logger.error("the model is not available: %s", slm.status().get("error"))
+    try:
+        yield
+    finally:
+        # Free the model before the process exits so the container stops
+        # cleanly instead of being killed with the weights still mapped.
+        slm.unload()
+        logger.info("Model released, shutting down")
 
 
 app = FastAPI(
@@ -53,6 +64,30 @@ app = FastAPI(
     ),
     lifespan=lifespan,
 )
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Tag every request so two concurrent ones can be told apart."""
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+    request.state.request_id = request_id
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception("request %s failed", request_id)
+        raise
+    took = (time.perf_counter() - started) * 1000
+    response.headers["x-request-id"] = request_id
+    logger.info(
+        "%s %s -> %s in %.0f ms (%s)",
+        request.method,
+        request.url.path,
+        response.status_code,
+        took,
+        request_id,
+    )
+    return response
+
 
 # The frontend team calls this API from a browser.
 app.add_middleware(
@@ -141,7 +176,10 @@ async def ask(request: AskRequest) -> dict[str, Any]:
         }
     IN_FLIGHT += 1
     try:
-        return await _run_ask(request, question)
+        result = await _run_ask(request, question)
+        state = getattr(request, "state", None)
+        result["request_id"] = getattr(state, "request_id", None)
+        return result
     finally:
         IN_FLIGHT -= 1
 

@@ -226,6 +226,13 @@ class SLM:
             self._load_error = str(exc)
             return False
 
+    def unload(self) -> None:
+        """Release the model so the process can exit cleanly."""
+        with self._lock:
+            self._llm = None
+        self._loaded_at = None
+        logger.info("the model was released")
+
     def is_ready(self) -> bool:
         """True when the model can answer a request right now."""
         if self.backend == "server":

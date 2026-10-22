@@ -691,6 +691,7 @@ class Pipeline:
                 "carry": (choice or {}).get("carry", []) or self._template_carry(chosen, bundle),
                 "watch_for": (choice or {}).get("watch_for", [])
                 or self._template_watch(chosen, bundle),
+                "note": self._profile_advice(bundle),
             },
             "evidence": bundle.get("evidence", {}),
             "proof": self._build_proof(chosen, bundle, intent),
@@ -781,17 +782,6 @@ class Pipeline:
         strict.verified = not strict.violations
         return strict
 
-    @staticmethod
-    def _model_text(choice: dict[str, Any] | None) -> str:
-        """Only the text the model itself wrote (no scaffolding)."""
-        if not choice:
-            return ""
-        parts = [str(choice.get("headline") or "")]
-        parts += [str(r) for r in (choice.get("why") or [])]
-        parts += [str(c) for c in (choice.get("carry") or [])]
-        parts += [str(w) for w in (choice.get("watch_for") or [])]
-        return "\n".join(p for p in parts if p)
-
     def _compose(
         self, chosen, choice, top_slots, engine_result, bundle
     ) -> str:
@@ -811,6 +801,8 @@ class Pipeline:
         watch = self._template_watch(chosen, bundle)
         if watch:
             parts.append("Watch out for: " + ", ".join(watch[:5]) + ".")
+        for note in self._profile_advice(bundle)[:2]:
+            parts.append(f"- {note}")
         if len(top_slots) > 1:
             alts = ", ".join(f"{s.place} at {s.when.strftime('%H:%M')}" for s in top_slots[1:3])
             parts.append(f"Alternatives: {alts}.")
@@ -933,11 +925,10 @@ class Pipeline:
             "answer_source": "template",
         }
 
-    def _profile_note(self, bundle: dict[str, Any]) -> list[str]:
+    def _profile_advice(self, bundle: dict[str, Any]) -> list[str]:
         """The advice the person's own condition calls for."""
         notes: list[str] = []
-        profiles = bundle.get("intent").profile or []
-        for name in profiles:
+        for name in bundle.get("intent").profile or []:
             cfg = self.engine.profile_cfg["profiles"].get(name, {})
             notes.extend(cfg.get("advice", []))
         return notes
