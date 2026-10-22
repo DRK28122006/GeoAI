@@ -55,20 +55,23 @@ Output is a JSON object constrained to a schema:
 }
 ```
 
-**2. Slot choosing and explaining.** Input is a table of already-scored
-options (place, time, score, temperature, air quality, wind, travel time,
-exposure) plus the evidence bundle. Output is a JSON object:
+**2. Slot choosing.** Input is a table of already-scored options (place,
+time, score, temperature, air quality, rain chance). Output is a JSON object
+with two fields:
 
 ```json
 {
   "slot_id": "S1-102218",
-  "headline": "Anuroopa Park, Thu 22 Oct, 09:00",
-  "why": ["E_WEATHER: feels like 26C with 12% chance of rain", "E_AQ: US-AQI 43 locally"],
-  "carry": ["Water bottle", "Light layer for the weather", "Inhaler"],
-  "watch_for": ["Limits were tightened because of: asthma."],
-  "avoid_note": "Avoid the afternoon, a storm is forecast."
+  "headline": "Go to Anuroopa Park around 09:00 on Thu 22 Oct."
 }
 ```
+
+The model picks the slot and writes that one sentence. Everything else in the
+answer - the reasons with their evidence, the carry list, the watch-outs and
+the avoid windows - is composed in code from the same fetched data, so the
+model is never the source of a fact. That is deliberate: a small model that
+is asked for the reasons will eventually state a number that was never
+fetched.
 
 The model is asked for JSON and the output is **constrained by a grammar**
 compiled from the schema, so the structure is always valid.

@@ -11,9 +11,12 @@ FROM python:3.12-slim AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_RETRIES=8 \
+    PIP_TIMEOUT=120 \
     VIRTUAL_ENV=/opt/venv
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN for i in 1 2 3 4 5; do apt-get update && break; echo "apt-get update failed, retrying"; sleep 5; done \
+    && apt-get install -y --no-install-recommends --fix-missing \
         build-essential \
         cmake \
         ninja-build \
@@ -30,19 +33,19 @@ COPY pyproject.toml README.md ./
 # cannot be loaded on glibc, so it is compiled here. GGML_NATIVE is off on
 # purpose: an image compiled for the build machine's CPU dies with an
 # illegal instruction on any other one. These flags are the common baseline.
-RUN pip install --upgrade pip setuptools wheel \
-    && pip install cmake ninja \
+RUN pip install --retries 5 --timeout 120 --upgrade pip setuptools wheel \
+    && pip install --retries 5 --timeout 120 cmake ninja \
     && CMAKE_ARGS="-DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_F16C=ON \
                    -DGGML_FMA=ON -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF \
                    -DLLAMA_BUILD_EXAMPLES=OFF" \
-       pip install --no-binary llama-cpp-python "llama-cpp-python==0.3.19" \
-    && pip install fastapi "uvicorn[standard]" httpx "pydantic>=2.0" \
-       pydantic-settings diskcache PyYAML astral
+       pip install --retries 5 --timeout 120 --no-binary llama-cpp-python "llama-cpp-python==0.3.19" \
+    && pip install --retries 5 --timeout 120 fastapi "uvicorn[standard]" httpx "pydantic>=2.0" \
+       pydantic-settings diskcache PyYAML astral pyrosm
 
 # The application itself, installed without touching the dependencies we
 # just pinned above. The config files travel with it as package data.
 COPY app/ ./app/
-RUN pip install --no-deps .
+RUN pip install --retries 5 --timeout 120 --no-deps .
 
 # --------------------------------------------------------------- runtime
 FROM python:3.12-slim AS runtime
@@ -65,9 +68,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 # curl is needed by the health check, ca-certificates by the outbound calls
 # to the live data sources.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN for i in 1 2 3 4 5; do apt-get update && break; echo "apt-get update failed, retrying"; sleep 5; done \
+    && apt-get install -y --no-install-recommends --fix-missing \
         curl \
         ca-certificates \
+        libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 appuser
 

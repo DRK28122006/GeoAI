@@ -375,7 +375,7 @@ class SLM:
     # ------------------------------------------------------------------ API
     def parse_intent(self, question: str, now_iso: str) -> dict[str, Any]:
         user = f"Today is {now_iso} (IST). Question: {question}"
-        return self._complete_json(PARSER_SYSTEM, user, INTENT_SCHEMA, max_tokens=160)
+        return self._complete_json(PARSER_SYSTEM, user, INTENT_SCHEMA, max_tokens=96)
 
     def choose(self, question: str, options: list[dict[str, Any]]) -> dict[str, Any]:
         def number(value, digits=0):
@@ -394,7 +394,7 @@ class SLM:
         # The prompt is kept small on purpose: every token costs time on a
         # CPU, and the facts the model needs are all in the table.
         user = f"Options:\n{table}\n\nQuestion: {question[:200]}"
-        return self._complete_json(CHOOSER_SYSTEM, user, CHOICE_SCHEMA, max_tokens=110)
+        return self._complete_json(CHOOSER_SYSTEM, user, CHOICE_SCHEMA, max_tokens=80)
 
 
 slm = SLM()

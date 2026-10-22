@@ -11,3 +11,4 @@ dist/
 server.log
 .env
 *.bak
+wheels/

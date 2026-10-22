@@ -8,8 +8,16 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app import main as main_module
+from app.config import settings
 
 IST = ZoneInfo("Asia/Kolkata")
+
+
+@pytest.fixture(autouse=True)
+def _disable_geofabrik(monkeypatch):
+    # Tests must not hit the network for regional extracts.
+    monkeypatch.setattr(settings, "GEOFABRIK_ENABLED", False)
+
 
 def _bundle(activity: str = "running", profile: list[str] | None = None):
     """A synthetic bundle, shaped exactly like gather_context returns."""

@@ -6,16 +6,18 @@
 # on the Hub, then upload our card, our prompt contract and the GGUF we
 # serve:
 #
-#   1. Open https://huggingface.co/Qwen/Qwen3-1.7B in a browser and click
-#      "Duplicate". Name it <your-org>/geoai-outdoor-assistant. That copies
-#      the weights, the config and the tokenizer into your namespace, so
-#      from_pretrained works on it straight away.
-#   2. Run this script with your token:
+#   1. Open https://huggingface.co/Qwen/Qwen3-1.7B and click "Duplicate".
+#      Name it <your-org>/geoai-outdoor-assistant. That copies the weights,
+#      the config and the tokenizer into your namespace, so from_pretrained
+#      works on it straight away.
+#   2. Create a write token: Settings -> Access Tokens -> New token, role
+#      Write.
+#   3. Run this script with the token:
 #
 #      HF_TOKEN=hf_xxx ./hf_repo/upload.sh <your-org>/geoai-outdoor-assistant
 #
 # The script checks the repository before and after the upload, so it fails
-# loudly rather than leaving a repository that does not load.
+# loudly rather than leaving a repository that cannot be loaded.
 set -euo pipefail
 
 REPO="${1:-}"
@@ -31,54 +33,117 @@ fi
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$HERE")"
 
-if command -v huggingface-cli >/dev/null 2>&1; then
-    CLI="$(command -v huggingface-cli)"
-elif command -v hf >/dev/null 2>&1; then
-    CLI="$(command -v hf)"
+# The hub client lives in the project environment, not necessarily in the
+# system one.
+if [ -x "$ROOT/.venv/bin/python" ]; then
+    PY="$ROOT/.venv/bin/python"
 else
+    PY="python3"
+fi
+if ! "$PY" -c "import huggingface_hub" 2>/dev/null; then
     echo "install the client: pip install -U 'huggingface_hub[cli]'" >&2
     exit 1
 fi
 
-# ---------------------------------------------------------------- pre-flight
-# from_pretrained needs config.json and the tokenizer. If the repository is
-# not a copy of the base model yet, the upload would leave something that
-# cannot be loaded, so we stop here instead.
+# The checks and the upload both go through the Python API. The command line
+# client renames its subcommands between versions ("huggingface-cli api" does
+# not exist in the current one), so the API is the stable path.
+hf_python() {
+    "$PY" - "$@" <<'PY'
+import sys
+from huggingface_hub import HfApi
+
+repo = sys.argv[1]
+api = HfApi(token=None)
+files = [f.rfilename for f in api.list_repo_files(repo)]
+for name in files:
+    print(name)
+PY
+}
+
 echo "checking $REPO"
-FILES="$("$CLI" api "$REPO" --json 2>/dev/null || true)"
-if ! printf '%s' "$FILES" | grep -q '"config.json"'; then
-    echo "the repository has no config.json, so from_pretrained would not work."
-    echo "duplicate https://huggingface.co/Qwen/Qwen3-1.7B first, then run this again."
+FILES="$(hf_python "$REPO" || true)"
+if [ -z "$FILES" ]; then
+    echo "the repository does not exist or the token cannot see it." >&2
+    echo "duplicate https://huggingface.co/Qwen/Qwen3-1.7B first, then run this again." >&2
     exit 1
 fi
-if ! printf '%s' "$FILES" | grep -q 'tokenizer'; then
-    echo "the repository has no tokenizer files."
-    echo "duplicate https://huggingface.co/Qwen/Qwen3-1.7B first, then run this again."
+
+missing=""
+for want in config.json tokenizer.json; do
+    if printf '%s\n' "$FILES" | grep -qx "$want"; then
+        echo "  ok      $want"
+    else
+        echo "  MISSING $want"
+        missing="yes"
+    fi
+done
+if printf '%s\n' "$FILES" | grep -q "safetensors"; then
+    echo "  ok      the weights are there, from_pretrained will work"
+else
+    echo "  MISSING the weights, from_pretrained will NOT work"
+    missing="yes"
+fi
+if [ -n "$missing" ]; then
+    echo
+    echo "the repository is not a copy of the base model yet." >&2
+    echo "duplicate https://huggingface.co/Qwen/Qwen3-1.7B first, then run this again." >&2
     exit 1
 fi
-if ! printf '%s' "$FILES" | grep -q 'safetensors'; then
-    echo "the repository has no safetensors weights."
-    echo "duplicate https://huggingface.co/Qwen/Qwen3-1.7B first, then run this again."
-    exit 1
-fi
-echo "  the repository looks like a copy of the base model, good"
 
 # ------------------------------------------------------------------- upload
+echo
 echo "uploading the model card"
-"$CLI" upload "$REPO" "$HERE/README.md" --repo-type model \
-    --commit-message "model card for the GeoAI outdoor assistant"
+"$PY" - "$REPO" "$HERE/README.md" <<'PY'
+import sys
+from huggingface_hub import HfApi
+
+repo, path = sys.argv[1], sys.argv[2]
+HfApi().upload_file(
+    path_or_fileobj=path,
+    path_in_repo="README.md",
+    repo_id=repo,
+    repo_type="model",
+    commit_message="model card for the GeoAI outdoor assistant",
+)
+print("  README.md")
+PY
 
 echo "uploading the prompt contract and the schemas"
 for file in serving_config.json prompts.md intent.schema.json choice.schema.json; do
-    "$CLI" upload "$REPO" "$HERE/$file" --repo-type model \
-        --commit-message "$file"
+    "$PY" - "$REPO" "$HERE/$file" "$file" <<'PY'
+import sys
+from huggingface_hub import HfApi
+
+repo, path, name = sys.argv[1], sys.argv[2], sys.argv[3]
+HfApi().upload_file(
+    path_or_fileobj=path,
+    path_in_repo=name,
+    repo_id=repo,
+    repo_type="model",
+    commit_message=name,
+)
+print(f"  {name}")
+PY
 done
 
 GGUF="$ROOT/models/Qwen3-1.7B-Q4_K_M.gguf"
 if [ -f "$GGUF" ]; then
-    echo "uploading the GGUF build we serve"
-    "$CLI" upload "$REPO" "$GGUF" --repo-type model \
-        --commit-message "Qwen3-1.7B Q4_K_M GGUF used by the llama.cpp server"
+    echo "uploading the GGUF build we serve (1.1 GB, this takes a few minutes)"
+    "$PY" - "$REPO" "$GGUF" <<'PY'
+import sys
+from huggingface_hub import HfApi
+
+repo, path = sys.argv[1], sys.argv[2]
+HfApi().upload_file(
+    path_or_fileobj=path,
+    path_in_repo="Qwen3-1.7B-Q4_K_M.gguf",
+    repo_id=repo,
+    repo_type="model",
+    commit_message="Qwen3-1.7B Q4_K_M GGUF used by the llama.cpp server",
+)
+print("  Qwen3-1.7B-Q4_K_M.gguf")
+PY
 else
     echo "note: $GGUF is not here, so the GGUF was not uploaded."
 fi
@@ -86,32 +151,31 @@ fi
 # -------------------------------------------------------------- post-flight
 echo
 echo "checking the result"
-FILES="$("$CLI" api "$REPO" --json 2>/dev/null || true)"
-missing=0
-for want in README.md config.json tokenizer.json intent.schema.json choice.schema.json; do
-    if printf '%s' "$FILES" | grep -q "$want"; then
+FILES="$(hf_python "$REPO" || true)"
+missing=""
+for want in README.md config.json tokenizer.json prompts.md intent.schema.json choice.schema.json serving_config.json; do
+    if printf '%s\n' "$FILES" | grep -qx "$want"; then
         echo "  ok      $want"
     else
         echo "  MISSING $want"
-        missing=1
+        missing="yes"
     fi
 done
-if printf '%s' "$FILES" | grep -q 'safetensors'; then
+if printf '%s\n' "$FILES" | grep -q "safetensors"; then
     echo "  ok      the weights are there, from_pretrained will work"
 else
     echo "  MISSING the weights, from_pretrained will NOT work"
-    missing=1
+    missing="yes"
 fi
 
-if [ "$missing" -ne 0 ]; then
+if [ -n "$missing" ]; then
     echo
     echo "the repository is not complete yet." >&2
     exit 1
 fi
 
 echo
-echo "done. set the licence to apache-2.0 in the repository settings if the"
-echo "duplicate did not carry it over."
+echo "done. make sure the licence says apache-2.0 in the repository settings."
 echo "load it with:"
 echo "  from transformers import AutoModelForCausalLM"
 echo "  model = AutoModelForCausalLM.from_pretrained(\"$REPO\")"

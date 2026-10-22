@@ -115,6 +115,18 @@ class Settings(BaseSettings):
     # with a limitation instead of hanging the request.
     OVERPASS_BUDGET_S: float = float(os.getenv("OVERPASS_BUDGET_S", "15"))
 
+    # --- Geofabrik (regional OSM extracts, queried locally) ---
+    # When enabled, the assistant downloads the Geofabrik zone extract that
+    # contains the user's location once, caches it on disk, and queries it
+    # locally instead of going through the Overpass mirrors. Overpass stays
+    # as the fallback when the extract cannot be fetched or parsed.
+    GEOFABRIK_ENABLED: bool = os.getenv("GEOFABRIK_ENABLED", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    TTL_GEOFABRIK: int = 7 * 24 * 3600
+
     @property
     def user_agent(self) -> str:
         """Short, honest UA for Overpass and the other open APIs."""

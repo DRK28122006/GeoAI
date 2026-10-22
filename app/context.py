@@ -23,6 +23,7 @@ from app.sources.airquality import AQSource
 from app.sources.daylight import DaylightSource
 from app.sources.elevation import ElevationSource
 from app.sources.geocode import GeocodeSource
+from app.sources.geofabrik import GeofabrikSource
 from app.sources.overpass import OverpassSource, Venue
 from app.sources.routing import RoutingSource
 from app.sources.weather import WeatherSource
@@ -68,6 +69,7 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
     weather_src = WeatherSource()
     aq_src = AQSource()
     overpass = OverpassSource()
+    geofabrik = GeofabrikSource()
     routing = RoutingSource()
     daylight_src = DaylightSource()
     elevation_src = ElevationSource()
@@ -216,12 +218,27 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
     t0 = time.perf_counter()
     # Two independent venue sources run together and are merged: Overpass has
     # the best tag coverage but is often slow, Nominatim answers in ~1s.
+    # Geofabrik is tried first when enabled: it is local and fast after the
+    # first download. Overpass remains the fallback for anything it cannot
+    # answer, so a failed extract never breaks the request.
+    async def _venues_from_geofabrik():
+        if not settings.GEOFABRIK_ENABLED:
+            return None
+        try:
+            res = await geofabrik.get_venues(
+                intent.activity, origin.lat, origin.lon, intent.radius_km
+            )
+            if res is not None and res.ok and res.data:
+                return res
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Geofabrik venues failed, falling back to Overpass: %s", exc)
+        return None
+
+    gf_venue_res = await _venues_from_geofabrik()
     try:
-        venue_res, nom_venue_res = await asyncio.wait_for(
-            asyncio.gather(
-                overpass.get_venues(
-                    intent.activity, origin.lat, origin.lon, intent.radius_km
-                ),
+        if gf_venue_res is not None:
+            venue_res = gf_venue_res
+            nom_venue_res = await asyncio.wait_for(
                 geo.search_venues(
                     nom_terms,
                     place_label,
@@ -230,17 +247,36 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
                     intent.radius_km,
                     accept_types=nom_types,
                 ),
-            ),
-            timeout=settings.VENUE_DEADLINE_S,
-        )
+                timeout=settings.VENUE_DEADLINE_S,
+            )
+        else:
+            venue_res, nom_venue_res = await asyncio.wait_for(
+                asyncio.gather(
+                    overpass.get_venues(
+                        intent.activity, origin.lat, origin.lon, intent.radius_km
+                    ),
+                    geo.search_venues(
+                        nom_terms,
+                        place_label,
+                        origin.lat,
+                        origin.lon,
+                        intent.radius_km,
+                        accept_types=nom_types,
+                    ),
+                ),
+                timeout=settings.VENUE_DEADLINE_S,
+            )
     except TimeoutError:
         limitations.append(
             "The venue lookup was too slow, so the answer uses the venues that "
             "were already known for the area."
         )
-        venue_res = await overpass.get_venues(
-            intent.activity, origin.lat, origin.lon, intent.radius_km
-        )
+        if gf_venue_res is None:
+            venue_res = await overpass.get_venues(
+                intent.activity, origin.lat, origin.lon, intent.radius_km
+            )
+        else:
+            venue_res = gf_venue_res
         nom_venue_res = None
     timings["venues_ms"] = round((time.perf_counter() - t0) * 1000)
     status["overpass_venues"] = venue_res.ok
@@ -321,12 +357,17 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
             f"The venues are spread over {spread_km:.0f} km, so the map features "
             f"around them were only mapped out to {hazard_radius_km:.0f} km."
         )
-    hazard_task = asyncio.create_task(
-        timed(
-            "hazards",
-            overpass.get_hazards(hazard_lat, hazard_lon, radius_km=hazard_radius_km),
-        )
-    )
+    async def _hazards():
+        if settings.GEOFABRIK_ENABLED:
+            try:
+                res = await geofabrik.get_hazards(hazard_lat, hazard_lon, radius_km=hazard_radius_km)
+                if res is not None and res.ok and res.data is not None:
+                    return res
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Geofabrik hazards failed, falling back to Overpass: %s", exc)
+        return await overpass.get_hazards(hazard_lat, hazard_lon, radius_km=hazard_radius_km)
+
+    hazard_task = asyncio.create_task(timed("hazards", _hazards()))
 
     # Every source gets its own deadline and the whole group gets one too:
     # a slow upstream must not turn the answer into a minute long wait.
