@@ -80,6 +80,7 @@ class Slot(BaseModel):
     weather: dict[str, Any] = Field(default_factory=dict)
     air: dict[str, Any] = Field(default_factory=dict)
     travel_min: float | None = None
+    travel_min_at_time: float | None = None
     distance_km: float | None = None
     daylight: dict[str, Any] = Field(default_factory=dict)
     evidence_ids: list[str] = Field(default_factory=list)
@@ -312,6 +313,18 @@ class ExposureEngine:
             dt = dt.replace(tzinfo=TZ)
         return dt
 
+    def _travel_factor(self, hour: int) -> float:
+        """Rush hour makes the trip longer. A documented proxy for traffic."""
+        profile = self.hazard_cfg["traffic_profile"]
+        t = self.weights["travel"]
+        for start, end in profile.get("rush_hours", []):
+            if start <= hour < end:
+                return float(t.get("rush_factor", 1.3))
+        for start, end in profile.get("night_hours", []):
+            if (start <= hour < 24) or (hour < end):
+                return float(t.get("night_factor", 0.85))
+        return float(t.get("normal_factor", 1.0))
+
     def _travel_score(self, travel_min: float | None, act: dict) -> float:
         if travel_min is None:
             return 60.0
@@ -417,7 +430,10 @@ class ExposureEngine:
                 air = self._air_score(local_pm25, us_aqi) * air_weight
                 air = max(0.0, min(100.0, air))
                 wind_rain = self._wind_rain_score(wind_kmh, gusts, precip_prob, act)
-                travel = self._travel_score(travel_min, act)
+                travel_at_time = (
+                    None if travel_min is None else travel_min * self._travel_factor(when.hour)
+                )
+                travel = self._travel_score(travel_at_time, act)
 
                 breakdown = {
                     "comfort": round(comfort, 1),
@@ -451,8 +467,13 @@ class ExposureEngine:
                     reasons.append(f"local PM2.5 {local_pm25:.0f} ug/m3 is above the {pm25_limit:.0f} limit")
                 if act.get("daylight_required") and not is_day and not venue.lit:
                     reasons.append("it is dark and this venue is not lit")
-                if travel_min is not None and travel_min > float(self.weights["travel"]["max_travel_min"]):
-                    reasons.append(f"travel time {travel_min:.0f} min is too long")
+                if (
+                    travel_at_time is not None
+                    and travel_at_time > float(self.weights["travel"]["max_travel_min"])
+                ):
+                    reasons.append(
+                        f"travel time {travel_at_time:.0f} min at that hour is too long"
+                    )
 
                 slot = Slot(
                     slot_id=f"S{vi + 1}-{when.strftime('%m%d%H')}",
@@ -492,6 +513,9 @@ class ExposureEngine:
                         "bias_factor": bias,
                     },
                     travel_min=None if travel_min is None else round(travel_min, 1),
+                    travel_min_at_time=(
+                        None if travel_at_time is None else round(travel_at_time, 1)
+                    ),
                     distance_km=None if distance_km is None else round(distance_km, 2),
                     daylight={"sunrise": sunrise, "sunset": sunset},
                     evidence_ids=["E_VENUES", "E_WEATHER", "E_AQ", "E_HAZARDS"],

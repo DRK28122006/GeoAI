@@ -1,0 +1,32 @@
+{
+  "_comment": "How the base model is served in production. The weights are unchanged from Qwen/Qwen3-1.7B; this file documents the serving configuration so the repository is self-describing.",
+  "base_model": "Qwen/Qwen3-1.7B",
+  "license": "apache-2.0",
+  "parameters_total": 2032178696,
+  "parameters_non_embedding": 1720712704,
+  "transformers_version_serving": "llama.cpp 0.6.0 via llama-cpp-python 0.3.19",
+  "serving": {
+    "backend": "llama-cpp-python (in-process) or llama-server",
+    "quantisation": "Q4_K_M",
+    "n_ctx": 4096,
+    "n_threads": 4,
+    "n_gpu_layers": 0,
+    "measured_on": "Intel Core i7-1165G7, 4 physical cores, AVX-512, 16 GB RAM",
+    "measured_speed": {
+      "prompt_processing_tok_per_s": 167,
+      "generation_tok_per_s": 17.4
+    }
+  },
+  "decoding": {
+    "mode": "non-thinking",
+    "thinking_disabled_by": "empty <think></think> block pre-seeded in the assistant turn",
+    "constraint": "JSON schema compiled to a GBNF grammar",
+    "temperature": 0.1,
+    "top_p": 0.9
+  },
+  "intake": {
+    "call_1": "intent parser",
+    "call_2": "slot chooser and explainer",
+    "post_check": "rule-based verifier over numbers, times, place names and evidence citations"
+  }
+}

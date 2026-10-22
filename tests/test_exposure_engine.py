@@ -274,13 +274,49 @@ def test_darkness_disqualifies_daylight_only_activities(venues):
 def test_travel_time_penalty_and_cap(venues):
     engine = ExposureEngine()
     near = engine.score(make_bundle(venues=venues, travel=300.0))
-    far = engine.score(make_bundle(venues=venues, travel=2400.0))
+    far = engine.score(make_bundle(venues=venues, travel=1800.0))
     assert near.slots[0].breakdown["travel"] > far.slots[0].breakdown["travel"]
 
     # beyond the cap the slot is dropped entirely
     too_far = engine.score(make_bundle(venues=venues, travel=3000.0))
     assert not too_far.slots
     assert any("travel time" in a["reason"] for a in too_far.avoid)
+
+
+def test_rush_hour_makes_the_trip_longer(venues):
+    """The rulebook: a venue forty minutes away at rush hour is not worth it."""
+    engine = ExposureEngine()
+    rush = engine.score(
+        make_bundle(
+            venues=venues,
+            travel=1800.0,
+            hours=[datetime(2026, 10, 22, 8, 0, tzinfo=IST)],
+        )
+    )
+    off_peak = engine.score(
+        make_bundle(
+            venues=venues,
+            travel=1800.0,
+            hours=[datetime(2026, 10, 22, 14, 0, tzinfo=IST)],
+        )
+    )
+    # 40 minutes at 08:00 is rush hour, so it is longer and scores worse
+    assert rush.slots[0].travel_min_at_time > off_peak.slots[0].travel_min_at_time
+    assert rush.slots[0].breakdown["travel"] < off_peak.slots[0].breakdown["travel"]
+
+
+def test_rush_hour_travel_can_breach_the_cap(venues):
+    """40 minutes off peak is fine, the same trip at rush hour is not."""
+    engine = ExposureEngine()
+    result = engine.score(
+        make_bundle(
+            venues=venues,
+            travel=2400.0,
+            hours=[datetime(2026, 10, 22, 8, 0, tzinfo=IST)],
+        )
+    )
+    assert not result.slots
+    assert any("too long" in a["reason"] for a in result.avoid)
 
 
 # ---------------------------------------------------------------- verifier

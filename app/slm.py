@@ -121,26 +121,28 @@ CHOICE_SCHEMA: dict[str, Any] = {
     "required": ["slot_id", "headline", "why", "carry", "watch_for", "avoid_note"],
 }
 
-PARSER_SYSTEM = """Extract intent from an outdoor-activity question. Rules:
-- activity: running (also for a walk, jog or stroll in a park), cycling, golf, cricket, football, tennis, hiking (only for a trek or trail walk), picnic (park outing), event (party, wedding, fair), photography, other.
-- location: the place name copied from the question without the city, for example "Koregaon Park" not "Koregaon Park, Pune". Empty string if the question names no place.
-- day: today, tomorrow, day_after, weekend, next_weekend, a weekday name, or none.
-- part_of_day: early_morning, morning, afternoon, evening, night, or none.
-- hour: the clock hour if the question gives one, otherwise null.
-- profile: asthma, senior, child or pregnancy when the person mentions it (asthma, breathing, allergy / elderly, parents, grandparents / kids, children / pregnant), otherwise ["none"].
-- out_of_scope: true only if the question is not about an outdoor activity, place or weather.
-Never invent a place that is not written in the question."""
+PARSER_SYSTEM = """You turn a question about an outdoor activity into structured data.
 
-CHOOSER_SYSTEM = """You are the GeoAI Outdoor Assistant. You are given scored options computed from live weather, air-quality and map data.
-Rules:
-- Choose exactly one slot_id from the options. Never invent a slot id.
-- headline: one short sentence naming the place and the time in plain language.
-- why: exactly 2 short reasons, each starting with the evidence id it relies on, for example "E3: US-AQI 42 is good".
-- carry: 2 to 3 short items to take.
-- watch_for: 2 to 3 short things to watch out for.
-- avoid_note: one short sentence on when to avoid going, or an empty string.
+activity: the outdoor activity the person wants to do.
+location: the place they mention, copied exactly as they wrote it. Empty string if they name no place.
+day: the day they mean, for example today, tomorrow, a weekday name, weekend, or none.
+part_of_day: early_morning, morning, afternoon, evening, night, or none.
+hour: the clock hour they give, otherwise null.
+profile: asthma, senior, child or pregnancy when the person mentions it, otherwise none.
+out_of_scope: true only if the question is not about an outdoor activity, a place or the weather.
+
+Use null or empty when the question does not say. Never invent a place."""
+
+CHOOSER_SYSTEM = """You are the GeoAI Outdoor Assistant. You are given options that were scored from live weather, air-quality and map data.
+
+Pick one slot_id from the options. Then write:
+headline: one sentence naming the place and the time.
+why: two reasons, each starting with the evidence id it relies on, for example "E_AQ: US-AQI 42 is good".
+carry: two or three things to take.
+watch_for: two or three things to watch out for.
+avoid_note: one sentence on when to avoid going, or an empty string.
+
 Be brief. Use only numbers that appear in the options. Do not add facts."""
-
 
 class SLMUnavailable(RuntimeError):
     """Raised when the model cannot be loaded or served."""

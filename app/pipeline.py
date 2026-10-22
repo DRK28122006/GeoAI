@@ -558,6 +558,7 @@ class Pipeline:
             "wind_kmh": slot.weather.get("wind_kmh"),
             "wind_dir": slot.weather.get("wind_from"),
             "travel_min": slot.travel_min,
+            "travel_min_at_time": slot.travel_min_at_time,
             "exposure": slot.air.get("exposure"),
         }
 
@@ -768,12 +769,17 @@ class Pipeline:
                 "E_HAZARDS",
             )
         if chosen.travel_min is not None:
-            add(
-                "travel",
-                f"about {chosen.travel_min:.0f} min by car"
-                + (f", {chosen.distance_km:.1f} km" if chosen.distance_km else ""),
-                "E_ROUTES",
-            )
+            travel_text = f"about {chosen.travel_min:.0f} min by car"
+            if (
+                chosen.travel_min_at_time is not None
+                and abs(chosen.travel_min_at_time - chosen.travel_min) > 0.5
+            ):
+                travel_text += (
+                    f", {chosen.travel_min_at_time:.0f} min at that hour of the day"
+                )
+            if chosen.distance_km:
+                travel_text += f", {chosen.distance_km:.1f} km"
+            add("travel", travel_text, "E_ROUTES")
         if chosen.daylight.get("sunset"):
             add(
                 "daylight",
