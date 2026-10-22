@@ -55,8 +55,8 @@ from huggingface_hub import HfApi
 
 repo = sys.argv[1]
 api = HfApi(token=None)
-files = [f.rfilename for f in api.list_repo_files(repo)]
-for name in files:
+# list_repo_files returns the names as plain strings
+for name in api.list_repo_files(repo):
     print(name)
 PY
 }
