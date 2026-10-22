@@ -129,7 +129,7 @@ travel-time calculation.
                       "why": [], "breakdown": {}, "weather": {}, "air": {}, "evidence": [] },
   "alternatives": [ { "place": "", "time": "", "score": 0 } ],
   "avoid":        [ { "window": "", "venue": "", "reason": "", "evidence": [] } ],
-  "advice":       { "carry": [], "watch_for": [] },
+  "advice":       { "carry": [], "watch_for": [], "note": [] },
   "evidence":     { "E1": { "source": "", "value": "", "fetched_at": 0 } },
   "map_geojson":  { "type": "FeatureCollection", "features": [] },
   "data_as_of":   "",
@@ -141,7 +141,8 @@ travel-time calculation.
 ```
 
 `map_geojson` contains the origin, the recommended and alternative venues, and the
-hazard lines, so a map can render the answer without another lookup.
+nearest hazard lines, so a map can render the answer without another lookup. The road
+geometries are simplified and capped, so the whole response stays small.
 
 ---
 
@@ -155,8 +156,14 @@ running, cycling, golf, cricket, football, tennis, hiking, picnic, outdoor event
 outdoor photography.
 
 Personal profiles tighten the limits and change the advice
-(`app/configs/profiles.yaml`): asthma, senior, child, pregnancy. Every profile-adjusted
-answer says which limits were tightened and carries a "not medical advice" note.
+(`app/configs/profiles.yaml`): asthma, senior, child, pregnancy, and **injury or
+recovery** (a fracture, a sprain, an operation). Every profile-adjusted answer says
+which limits were tightened and carries a "not medical advice" note.
+
+The injury profile is different on purpose. It does not only tighten limits: it rules
+the activity out. Ask about cycling with a fractured foot and the answer says plainly
+that cycling is not advisable, points at the doctor's advice, and then names the
+calmest nearby spot for when you are cleared. It never prescribes.
 
 ---
 

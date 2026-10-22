@@ -195,9 +195,13 @@ class SLM:
         """
         try:
             out = self._llm.create_completion(
-                prompt="<|im_start|>user\nReply with the word ready.<|im_end|>\n",
+                prompt=(
+                    "<|im_start|>user\nSay OK.<|im_end|>\n"
+                    "<|im_start|>assistant\n<think>\n\n</think>\n\nOK"
+                ),
                 max_tokens=8,
                 temperature=0.0,
+                stop=["<|im_end|>"],
             )
             text = (out["choices"][0]["text"] or "").strip()
         except Exception as exc:  # noqa: BLE001

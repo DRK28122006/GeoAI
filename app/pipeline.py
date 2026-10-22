@@ -62,10 +62,32 @@ ACTIVITY_KEYWORDS: dict[str, list[str]] = {
 }
 
 PROFILE_KEYWORDS: dict[str, list[str]] = {
-    "asthma": ["asthma", "asthmatic", "allergy", "allergic", "breathing", "copd"],
-    "senior": ["senior", "elderly", "parents", "grandparent", "grandfather", "grandmother", "aged"],
-    "child": ["child", "children", "kid", "kids", "son", "daughter", "toddler", "schoolboy"],
-    "pregnancy": ["pregnant", "pregnancy", "expecting", "expectant"],
+    "asthma": [
+        "asthma", "asthmatic", "allergy", "allergic", "breathing", "copd",
+        "bronchitis", "wheezy",
+    ],
+    "senior": [
+        "senior", "elderly", "parents", "parent", "grandparent", "grandfather",
+        "grandmother", "grandpa", "grandma", "aged", "dad", "father", "mother",
+        "uncle", "aunt", "nani", "abba", "old age", "senior citizen",
+    ],
+    "child": [
+        "child", "children", "kid", "kids", "son", "daughter", "toddler",
+        "schoolboy", "schoolgirl", "baby", "infant", "little one",
+    ],
+    "pregnancy": [
+        "pregnancy", "pregnant", "expecting", "expectant", "prenatal",
+        "antenatal",
+    ],
+    # A recent injury. It is not only about tighter limits: the activity
+    # itself may not be advisable, and the answer has to say so.
+    "injury": [
+        "fracture", "fractured", "injury", "injured", "surgery", "operation",
+        "cast", "sprain", "sprained", "strain", "strained", "pain", "painful",
+        "recovery", "recovering", "rehab", "physio", "physiotherapy", "crutches",
+        "wheelchair", "broken", "bruise", "swollen", "cannot walk", "can t walk",
+        "limping", "limp",
+    ],
 }
 
 LOCATION_CUES = (
@@ -231,6 +253,12 @@ class Pipeline:
         return None
 
     @staticmethod
+    def _profile_limits_or_empty(question: str) -> list[str]:
+        """The conditions the question mentions, in the order of the config."""
+        q = question.lower()
+        return [p for p, words in PROFILE_KEYWORDS.items() if any(w in q for w in words)]
+
+    @staticmethod
     def _is_out_of_scope(question: str) -> bool:
         """Questions that are not about an outdoor activity, place or weather.
 
@@ -344,7 +372,12 @@ class Pipeline:
     @staticmethod
     def _extract_intent_type(question: str) -> str:
         q = question.lower()
-        if re.search(r"\bis it (safe|ok|okay|good|fine)\b|\bcan i\b|\bshould i\b", q):
+        if re.search(
+            r"\bis it (safe|ok|okay|good|fine)\b|\bcan i\b|\bshould i\b|"
+            r"\bsafest\b|\bsafe way\b|\bsafely\b|\bbest way\b|\badvised\b|"
+            r"\brecommend\b",
+            q,
+        ):
             return "safety_check"
         if re.search(r"\b(better|or)\b.*\b(saturday|sunday|monday|tuesday|wednesday|thursday|friday)\b", q):
             return "compare"
@@ -417,7 +450,7 @@ class Pipeline:
                 "recommendation": None,
                 "alternatives": [],
                 "avoid": [],
-                "advice": {"carry": [], "watch_for": []},
+                "advice": {"carry": [], "watch_for": [], "note": []},
                 "evidence": {},
                 "map_geojson": {"type": "FeatureCollection", "features": []},
                 "data_as_of": now.isoformat(),
@@ -432,6 +465,13 @@ class Pipeline:
         engine_result = self.engine.score(bundle)
         top_slots = engine_result.slots[:3]
 
+        # The activity itself is ruled out by the person's condition. This is
+        # the most important answer the assistant can give, so it is put
+        # first and the person is addressed before the place.
+        limited_by = self._limited_by_profile(engine_result, bundle)
+        if limited_by:
+            return self._safety_answer(limited_by, bundle, engine_result, intent)
+
         # Nothing passed the hard constraints. That is a real answer, not a
         # failure: say why, and offer the least bad option with the caveat.
         if not top_slots and engine_result.all_slots:
@@ -444,13 +484,46 @@ class Pipeline:
                     if r
                 }
             )
+            # The model still writes the sentence: this is the case where a
+            # well phrased answer matters most.
+            choice = None
+            t0 = time.perf_counter()
+            try:
+                choice = await self._run_blocking(
+                    self.slm.choose,
+                    question,
+                    [self._slot_option(best)],
+                    bundle.get("evidence", {}),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("SLM chooser failed: %s", exc)
+            stage["slm_choose_ms"] = round((time.perf_counter() - t0) * 1000)
+
             headline = (
                 f"Nothing is ideal in that window. The best of the options is "
                 f"{best.place} around {best.when.strftime('%H:%M')} on "
                 f"{best.when.strftime('%a %d %b')} (score {best.score:.0f}/100), "
                 f"but it still has problems: {best.disqualified}."
             )
+            # The caveat always leads. The model may add a sentence, but it
+            # must not replace "nothing is ideal" with "go to", because the
+            # slot it is describing was disqualified.
+            model_headline = str((choice or {}).get("headline") or "").strip()
+            extra = ""
+            if model_headline and self._headline_is_grounded(
+                model_headline, best, bundle
+            ):
+                if "go to" in model_headline.lower():
+                    # It recommends the slot, which is not what we want here.
+                    answer_source = "template"
+                else:
+                    extra = model_headline
+                    answer_source = "model"
+            else:
+                answer_source = "template"
             body = [headline]
+            if extra:
+                body.append(extra)
             for reason in reasons[:5]:
                 body.append(f"- avoid this because of {reason}")
             body.append(
@@ -489,13 +562,11 @@ class Pipeline:
                 "data_as_of": now.isoformat(),
                 "sources": self._sources(),
                 "attribution": bundle.get("attribution", ""),
-                "limitations": _dedupe(
-                    bundle.get("limitations", []) + reasons[:5]
-                ),
+                "limitations": _dedupe(bundle.get("limitations", [])),
                 "timings_ms": {**bundle.get("timings", {}), **stage},
                 "answer": "\n".join(body),
                 "verified": True,
-                "answer_source": "template",
+                "answer_source": answer_source,
             }
 
         if not engine_result.slots:
@@ -514,7 +585,7 @@ class Pipeline:
                 "recommendation": None,
                 "alternatives": [],
                 "avoid": engine_result.avoid,
-                "advice": {"carry": [], "watch_for": []},
+                "advice": {"carry": [], "watch_for": [], "note": []},
                 "evidence": bundle.get("evidence", {}),
                 "map_geojson": self._geojson(bundle, []),
                 "data_as_of": now.isoformat(),
@@ -766,6 +837,111 @@ class Pipeline:
             out = [s for s in slots if s.slot_id != chosen.slot_id][:2]
         return out
 
+    def _headline_is_grounded(self, headline: str, slot, bundle) -> bool:
+        """The headline has to be about the place and the hour we chose."""
+        if not headline:
+            return False
+        if slot.place.lower() not in headline.lower():
+            return False
+        return slot.when.strftime("%H:%M") in headline
+
+    def _limited_by_profile(self, engine_result, bundle) -> str | None:
+        """The profile that rules the activity out, if one does."""
+        for slot in engine_result.all_slots:
+            if slot.disqualified and "not advisable" in slot.disqualified:
+                return bundle["intent"].profile[0] if bundle["intent"].profile else None
+        return None
+
+    def _safety_answer(
+        self, profile_name: str, bundle: dict[str, Any], engine_result, intent
+    ) -> dict[str, Any]:
+        """The answer when the person should not do the activity at all."""
+        profile_cfg = self.engine.profile_cfg["profiles"].get(profile_name, {})
+        advice = list(profile_cfg.get("advice", []))
+        activity = intent.activity
+
+        # The place is still worth naming, for when the activity is cleared.
+        best = None
+        for slot in engine_result.all_slots:
+            if best is None or slot.score > best.score:
+                best = slot
+
+        headline = (
+            f"Right now I would not suggest {activity}. With the injury you "
+            f"described, {activity} puts weight on a part of the body that is "
+            f"still healing, and the guidance for a fracture is to follow your "
+            f"doctor's advice and avoid weight bearing until you are cleared."
+        )
+        if best is not None:
+            headline += (
+                f" If your doctor says gentle activity is fine, the calmest spot "
+                f"near you is {best.place} around {best.when.strftime('%H:%M')} on "
+                f"{best.when.strftime('%a %d %b')}."
+            )
+
+        body = [headline]
+        for item in advice[:3]:
+            body.append(f"- {item}")
+        if best is not None:
+            body.append(
+                f"When you are cleared, {best.place} scores {best.score:.0f} out of "
+                f"100 at {best.when.strftime('%H:%M')}: "
+                + ", ".join(self._template_why(best)[:3]).replace("E_", "")
+            )
+        body.append(
+            "This is general guidance from open data, not medical advice. Your "
+            "doctor knows your fracture and should decide what is safe for you."
+        )
+
+        return {
+            "status": "partial",
+            "clarification_question": None,
+            "parsed": self._parsed_block(intent, bundle, "slm"),
+            "recommendation": {
+                "slot_id": best.slot_id if best else None,
+                "place": best.place if best else None,
+                "lat": best.lat if best else None,
+                "lon": best.lon if best else None,
+                "time": best.when.isoformat() if best else None,
+                "time_label": best.time_label if best else None,
+                "score": best.score if best else None,
+                "activity_not_advisable": True,
+                "why": self._template_why(best) if best else [],
+                "breakdown": best.breakdown if best else {},
+                "weather": best.weather if best else {},
+                "air": best.air if best else {},
+                "travel_min": best.travel_min if best else None,
+                "evidence": best.evidence_ids if best else [],
+            },
+            "alternatives": [],
+            "avoid": engine_result.avoid,
+            "advice": {
+                "carry": self._template_carry(best, bundle) if best else [],
+                "watch_for": self._template_watch(best, bundle) if best else [],
+                "note": advice,
+            },
+            "evidence": bundle.get("evidence", {}),
+            "proof": self._build_proof(best, bundle, intent) if best else None,
+            "map_geojson": self._geojson(bundle, engine_result.all_slots[:8]),
+            "data_as_of": now_ist().isoformat(),
+            "sources": self._sources(),
+            "attribution": bundle.get("attribution", ""),
+            "limitations": _dedupe(bundle.get("limitations", [])),
+            "timings_ms": bundle.get("timings", {}),
+            "answer": "\n".join(body),
+            "verified": True,
+            "answer_source": "template",
+        }
+
+    def _profile_note(self, bundle: dict[str, Any]) -> list[str]:
+        """The advice the person's own condition calls for."""
+        notes: list[str] = []
+        profiles = bundle.get("intent").profile or []
+        for name in profiles:
+            cfg = self.engine.profile_cfg["profiles"].get(name, {})
+            notes.extend(cfg.get("advice", []))
+        return notes
+
     def _template_why(self, slot) -> list[str]:
         w, a = slot.weather, slot.air
         reasons = []
@@ -849,6 +1025,41 @@ class Pipeline:
         return "\n".join(lines)
 
     @staticmethod
+    def _simplify(points: list, tolerance: float = 0.00015) -> list:
+        """Drop the points that do not change the shape of a line.
+
+        A highway with 400 vertices is 4 KB of JSON and looks the same on a
+        map as one with 40.
+        """
+        if len(points) < 3:
+            return points
+
+        def sq_distance(p, a, b) -> float:
+            (px, py), (ax, ay), (bx, by) = p, a, b
+            dx, dy = bx - ax, by - ay
+            if dx == 0 and dy == 0:
+                return (px - ax) ** 2 + (py - ay) ** 2
+            t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+            return (px - (ax + t * dx)) ** 2 + (py - (ay + t * dy)) ** 2
+
+        def douglas_peucker(pts, tol_sq):
+            if len(pts) < 3:
+                return pts
+            worst, index = 0.0, 0
+            for i in range(1, len(pts) - 1):
+                d = sq_distance(pts[i], pts[0], pts[-1])
+                if d > worst:
+                    worst, index = d, i
+            if worst <= tol_sq:
+                return [pts[0], pts[-1]]
+            left = douglas_peucker(pts[: index + 1], tol_sq)
+            right = douglas_peucker(pts[index:], tol_sq)
+            return left[:-1] + right
+
+        kept = douglas_peucker(points, tolerance * tolerance)
+        return [[round(v, 5) for v in p] for p in kept]
+
+    @staticmethod
     def _geojson(bundle: dict[str, Any], slots) -> dict[str, Any]:
         features = []
         origin = bundle.get("origin")
@@ -873,8 +1084,21 @@ class Pipeline:
                     },
                 }
             )
-        for h in bundle.get("hazards") or []:
-            pts = h.points[:60]
+        # The hazard lines are simplified and capped: the map needs to show
+        # where the busy roads are, not every vertex of every road.
+        recommended = slots[0] if slots else None
+        hazards = list(bundle.get("hazards") or [])
+        if recommended is not None:
+            from app.exposure_engine import haversine_km
+
+            hazards.sort(
+                key=lambda h: haversine_km(
+                    (recommended.lat, recommended.lon),
+                    h.points[0] if h.points else (0.0, 0.0),
+                )
+            )
+        for h in hazards[:12]:
+            pts = h.points[:200]
             if len(pts) < 2:
                 continue
             features.append(
@@ -882,9 +1106,15 @@ class Pipeline:
                     "type": "Feature",
                     "geometry": {
                         "type": "LineString",
-                        "coordinates": [[p[1], p[0]] for p in pts],
+                        "coordinates": Pipeline._simplify(
+                            [[p[1], p[0]] for p in pts]
+                        ),
                     },
-                    "properties": {"name": h.name or h.kind, "role": "hazard", "kind": h.kind},
+                    "properties": {
+                        "name": h.name or h.kind,
+                        "role": "hazard",
+                        "kind": h.kind,
+                    },
                 }
             )
         return {"type": "FeatureCollection", "features": features}
@@ -1027,7 +1257,7 @@ class Pipeline:
             "recommendation": None,
             "alternatives": [],
             "avoid": [],
-            "advice": {"carry": [], "watch_for": []},
+            "advice": {"carry": [], "watch_for": [], "note": []},
             "evidence": {},
             "proof": None,
             "map_geojson": {"type": "FeatureCollection", "features": []},
@@ -1061,7 +1291,7 @@ class Pipeline:
             "recommendation": None,
             "alternatives": [],
             "avoid": [],
-            "advice": {"carry": [], "watch_for": []},
+            "advice": {"carry": [], "watch_for": [], "note": []},
             "evidence": {},
             "proof": None,
             "map_geojson": {"type": "FeatureCollection", "features": []},

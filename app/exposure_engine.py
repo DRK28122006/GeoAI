@@ -404,12 +404,14 @@ class ExposureEngine:
 
         pm25_limit = float(self.weights["air"]["pm25_limit_ug_m3"])
         temp_limit = float(act.get("temp_limit_c", 37))
+        limit_activity = False
         exposure_weight = 1.0
         air_weight = 1.0
         o3_limit = 200.0
         for cfg in profiles.values():
             pm25_limit = min(pm25_limit, float(cfg.get("pm25_limit", 90)))
             o3_limit = min(o3_limit, float(cfg.get("o3_limit", 200)))
+            limit_activity = limit_activity or bool(cfg.get("limit_activity"))
             temp_limit = min(temp_limit, float(cfg.get("temp_limit_c", 34)))
             exposure_weight *= float(cfg.get("exposure_weight", 1.0))
             air_weight *= float(cfg.get("air_weight", 1.0))
@@ -521,6 +523,11 @@ class ExposureEngine:
                 reasons = []
                 if idx is None:
                     reasons.append("no forecast is available for this hour")
+                if limit_activity:
+                    reasons.append(
+                        "this activity is not advisable with the recovery the "
+                        "user described"
+                    )
                 if code in THUNDERSTORM_CODES or (cape or 0) > 1500:
                     reasons.append("thunderstorm risk")
                 if precip_prob is not None and precip_prob > float(act.get("precip_prob_limit", 60)):

@@ -61,6 +61,17 @@ MAJOR_CITIES = {
     "nashik", "vadodara", "rajkot", "ludhiana", "amritsar", "dehradun", "shimla",
 }
 
+# A business is never a place the user meant. Searching "Rushikonda in
+# Visakhapatnam" should not answer with a car wash in that area.
+BUSINESS_KINDS = {
+    "car_wash", "car_repair", "fuel", "gas_station", "bank", "atm", "cafe",
+    "restaurant", "fast_food", "bar", "pub", "pharmacy", "hairdresser",
+    "beauty_salon", "clothes", "shoes", "car", "motorcycle", "parking",
+    "bicycle", "charging_station", "toilets", "bench", "waste_basket",
+    "drinking_water", "telephone", "post_box", "grave_yard", "crossing",
+    "traffic_signals", "street_lamp", "bus_stop", "taxi", "laundry",
+}
+
 COUNTRIES = {
     "india", "indian", "bengaluru", "bangalore", "mumbai", "delhi", "pune", "hyderabad",
     "chennai", "kolkata", "noida", "gurugram", "gurgaon", "ahmedabad", "jaipur", "kochi",
@@ -180,6 +191,8 @@ class GeocodeSource(BaseSource):
 
             unique: list[GeocodeCandidate] = []
             for c in candidates:
+                if c.kind in BUSINESS_KINDS:
+                    continue
                 if all(
                     abs(c.lat - u.lat) > 0.01 or abs(c.lon - u.lon) > 0.01
                     for u in unique

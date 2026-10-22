@@ -140,26 +140,38 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
         geo_res.fetched_at,
     )
     if len(candidates) > 1:
-        others = [c for c in candidates[1:4] if c.country_code != origin.country_code]
-        if others:
-            limitations.append(
-                f"'{intent.location_text}' matches places in more than one country; "
-                f"used '{origin.short_name}'. Other matches: "
-                + ", ".join(
-                    dict.fromkeys(c.short_name for c in others)
+        # A place in another country is noise, not a useful alternative, so
+        # only the matches from the same country are listed.
+        same_country = [
+            c
+            for c in candidates[1:6]
+            if c.country_code and c.country_code == origin.country_code
+        ]
+        other_country = [
+            c
+            for c in candidates[1:6]
+            if c.country_code and origin.country_code and (
+                c.country_code != origin.country_code
+            )
+        ]
+        names: list[str] = []
+        for c in same_country:
+            if c.short_name != origin.short_name and c.short_name not in names:
+                names.append(c.short_name)
+        if names or other_country:
+            if other_country:
+                head = (
+                    f"'{intent.location_text}' matches places in more than one country; "
+                    f"used '{origin.short_name}'"
                 )
-                + "."
-            )
-        else:
-            others = []
-            for c in candidates[1:5]:
-                if c.short_name != origin.short_name and c.short_name not in others:
-                    others.append(c.short_name)
-            limitations.append(
-                f"Multiple places match '{intent.location_text}'; used "
-                f"'{origin.short_name}'."
-                + (f" Other matches: {', '.join(others)}." if others else "")
-            )
+            else:
+                head = (
+                    f"'{intent.location_text}' matches more than one place; "
+                    f"used '{origin.short_name}'"
+                )
+            if names:
+                head += f". Other matches: {', '.join(names[:3])}"
+            limitations.append(head + ".")
 
     # -------------------------------------------------------------- venues
     async def timed(name: str, coro):

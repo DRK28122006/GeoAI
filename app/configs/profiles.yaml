@@ -3,6 +3,23 @@
 # profile-adjusted answer carries a "not medical advice" note.
 
 profiles:
+  # An injury is different from the other profiles: the limit tightening is
+  # secondary. What matters is that the answer says plainly that the
+  # activity is not advisable right now and offers a gentler alternative.
+  injury:
+    label: "recent injury or recovery"
+    pm25_limit: 60
+    temp_limit_c: 32
+    exposure_weight: 1.3
+    air_weight: 1.3
+    min_duration_min: 20
+    limit_activity: true
+    advice:
+      - "With a recent fracture or injury, cycling is not advisable. Please follow your doctor's advice and do not push through pain."
+      - "A short, flat walk is a much better option than cycling until you are cleared."
+      - "Take only the route you know, avoid uneven ground, and stop if there is any pain."
+      - "If you do cycle, keep it short, flat and at a pace you could hold without limping."
+
   asthma:
     label: "asthma / breathing sensitivity"
     pm25_limit: 60          # hard disqualifier above this (ug/m3)

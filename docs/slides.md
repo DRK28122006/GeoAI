@@ -71,6 +71,8 @@ profile's limit, darkness in an unlit venue, and travel time over the cap.
 
 **Profiles tighten the limits, not just the wording.** Asthma: PM2.5 limit 90 -> 60 ug/m3, exposure weighted 1.6x, and the advice adds an inhaler. Senior, child and pregnancy behave the same way.
 
+**One profile is different on purpose.** An injury or recovery does not only tighten limits, it rules the activity out. Ask about cycling with a fractured foot and the answer says plainly that cycling is not advisable, points at the doctor's advice, and only then names the calmest nearby spot for when you are cleared. It never prescribes, and it says it is not medical advice.
+
 This is a unit test, not a claim: `test_wind_direction_changes_the_ranking` scores the same venue with an easterly and a westerly wind and asserts the ranking flips.
 
 ---
