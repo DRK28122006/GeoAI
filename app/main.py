@@ -63,14 +63,16 @@ app.add_middleware(
 
 
 class AskRequest(BaseModel):
-    question: str = Field(..., min_length=2, max_length=2000)
-    query: str | None = None
+    """Either `question` or `query` may carry the text; `question` wins."""
+
+    question: str | None = Field(default=None, min_length=2, max_length=2000)
+    query: str | None = Field(default=None, min_length=2, max_length=2000)
     lat: float | None = None
     lon: float | None = None
     debug: bool = False
 
     def text(self) -> str:
-        return (self.query or self.question).strip()
+        return (self.question or self.query or "").strip()
 
 
 @app.get("/health")
