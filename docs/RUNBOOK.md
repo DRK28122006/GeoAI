@@ -34,7 +34,7 @@ CMAKE_ARGS="-DGGML_NATIVE=ON -DLLAMA_CURL=OFF" \
 
 | Config | prompt (pp256) | generation (tg64) |
 |---|---|---|
-| **CPU, 4 threads, AVX-512** | **123.9 t/s** | **14.0 t/s** ✅ best for generation |
+| **CPU, 4 threads, AVX-512** | **124 t/s** | **14.0 t/s** best for generation |
 | Vulkan, full offload (`-ngl 99`) | 319.4 t/s | 11.2 t/s |
 
 → **Run on CPU.** Vulkan only wins on prefill, and we keep prompts small.
@@ -95,13 +95,31 @@ A custom `chat_handler=Jinja2ChatFormatter(...)` returns a `ChatFormatterRespons
 | overpass.osm.ch | 200 but **Switzerland-only** extract (0 results in India) | don't use |
 | overpass.kumi.systems / private.coffee | read timeouts | don't use |
 | overpass.osm.jp | SSL hostname mismatch | don't use |
-| Open-Meteo, OSRM, HF | fine | ✅ |
+| Open-Meteo, OSRM, Hugging Face | fine | yes |
 
 → **Per-source User-Agent**, not one global UA. Nominatim and Overpass need *opposite* UAs.
 
 ---
 
-## 4. Commands
+## 4. What the audits changed
+
+Three independent audits were run against the rulebook. The findings that
+changed the code:
+
+* A failed Overpass lookup was cached as an empty success, so the assistant
+  could claim a venue was free of traffic when it simply could not check.
+* The server side element limit threw away most candidate venues and roads
+  before the ranking saw them.
+* The model invented a health profile and the answer then tightened the
+  limits for a person nobody mentioned. The activity and the place are now
+  taken from the question too.
+* The verifier read any two digit number as a clock time, so every dated
+  headline was rejected and the model's wording never survived.
+* A non editable install had no config files and crashed on import.
+* The docker image was compiled for the build machine's CPU and would die
+  with an illegal instruction on any other host.
+
+## 5. Commands
 
 ```bash
 cd /home/mesh/Projects/GEOai/deepesh-repo

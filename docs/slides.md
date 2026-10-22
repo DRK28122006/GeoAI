@@ -88,12 +88,12 @@ Carry: Water bottle, Light layer for the weather, Inhaler.
 Watch out for: Limits were tightened because of: asthma.
 ```
 
-**The proof, factor by factor:**
+**The proof, factor by factor** (this is the `proof` block in the response):
 
 ```
 weather        feels like 26C, 12% chance of rain, wind 9.5 km/h from E   [Open-Meteo / E_WEATHER]
 air quality    US-AQI 43, local PM2.5 estimated 8 ug/m3, bias x1.0         [Open-Meteo CAMS / E_AQ]
-local exposure index 0.00 (no busy roads downwind)                        [OpenStreetMap / E_HAZARDS]
+local exposure index 3.00 (landfill 4.9km away, downwind, align 0.37)        [OpenStreetMap / E_HAZARDS]
 travel         about 9 min by car, 6.6 km                                   [OSRM / E_ROUTES]
 daylight       sunrise 06:10 / sunset 17:57 IST                            [Open-Meteo / E_DAYLIGHT]
 scoring        comfort 84.8  air 100.0  wind_rain 85.1  daylight 92.0  travel 93.7
@@ -137,7 +137,7 @@ The model has no memory of weather or geography, and it is never allowed to stat
 - **No live traffic feed.** Travel time is OSRM car routing plus a documented time-of-day multiplier per road class. It is an approximation and we label it as one.
 - **OSM coverage is uneven.** In smaller towns there may be no mapped venues at all. We say so and suggest widening the radius instead of inventing a place.
 - **Overpass can be at capacity.** The public mirrors throttle under load. We run a second venue source in parallel and cache failures briefly. The proper fix is a Geofabrik regional extract, which the rulebook allows, and it is the next thing we would build.
-- **Latency is 20 to 60 seconds** on a laptop CPU, depending on how the free APIs are behaving. The live data takes 8 to 25 seconds of that and the model 8 to 20. We cache aggressively and every source has its own deadline, so a slow upstream degrades the answer instead of stalling it.
+- **Latency is 25 to 45 seconds** on a laptop CPU, depending on how the free APIs are behaving. The live data takes 8 to 25 seconds of that and the model 8 to 20. We cache aggressively, every source has its own deadline and the whole live data stage has one too, so a slow upstream degrades the answer instead of stalling it. On the judging host we expect the same order of magnitude, not better.
 - **The model is small.** It misreads unusual phrasings occasionally. We compensate deterministically where we can, but a stronger parser would help.
 - **Profiles are conservative thresholds, not medical guidance.** Every profile-adjusted answer says so.
 
