@@ -303,7 +303,7 @@ class Pipeline:
                 if parsed.get("part_of_day") != "none"
                 else None
             ),
-            hour=parsed.get("hour"),
+            hour=None,
             days_ahead=self._extract_days_ahead(question),
             intent_type=intent_type,
             missing=missing,

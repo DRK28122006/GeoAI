@@ -75,7 +75,13 @@ class Settings(BaseSettings):
     # Bump this when a source changes shape, so stale entries are not reused.
     CACHE_VERSION: str = os.getenv("CACHE_VERSION", "v3")
     TTL_GEOCODE: int = 30 * 24 * 3600
-    TTL_OVERPASS: int = 6 * 3600
+    # The map does not change: roads, venues, industrial areas and water
+    # bodies are static OpenStreetMap geometry. What varies with the hour -
+    # the wind and the traffic multiplier - is computed in the engine, not
+    # fetched. So the map data can be cached for a day, and a second
+    # question about the same area is almost instant.
+    TTL_OVERPASS: int = 24 * 3600
+    TTL_VENUES: int = 24 * 3600
     TTL_WEATHER_FORECAST: int = 30 * 60
     TTL_AQ_FORECAST: int = 30 * 60
     TTL_STATION_OBS: int = 15 * 60

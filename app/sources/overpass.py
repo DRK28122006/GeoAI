@@ -15,6 +15,7 @@ Fixes that matter (each one was a real failure in the previous version):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -205,17 +206,25 @@ class OverpassSource(BaseSource):
                     )
                 )
 
-            # Prefer named, well-known venue types, then keep the shortlist tight.
+            # Prefer a venue a person would recognise: one that has a real
+            # name, one that is tagged for the sport, one that has a
+            # Wikipedia or Wikidata entry, and a name that reads like a name
+            # rather than a lettered block like "BH Park".
             def rank(v: Venue) -> tuple:
-                named = 0 if v.name.startswith("Unnamed") else 1
+                named = 0 if v.name.startswith(("Unnamed", "Park (", "Pitch (")) else 1
                 has_sport = 1 if v.tags.get("sport") else 0
-                return (-named, -has_sport, v.name)
+                notable = 1 if (v.tags.get("wikidata") or v.tags.get("wikipedia")) else 0
+                readable = 1 if len(v.name) > 8 and " " in v.name else 0
+                return (-named, -notable, -readable, -has_sport, v.name)
 
             venues.sort(key=rank)
             return venues[: act.get("shortlist", 12)]
 
         result = await self.fetch(
-            cache_key, settings.TTL_OVERPASS, _fetch, {"activity": activity, "radius_m": radius_m}
+            cache_key,
+            settings.TTL_VENUES,
+            _fetch,
+            {"activity": activity, "radius_m": radius_m},
         )
         if result.ok and not result.data:
             result.degraded = True
@@ -268,12 +277,14 @@ class OverpassSource(BaseSource):
         def sel(template: str) -> str:
             return template % (radius_m, lat, lon)
 
-        # One query, not two: the public mirrors throttle under load and each
-        # round trip costs the user seconds. The output mode keeps the full
-        # geometry, so the distance to a road is measured to the road itself
-        # and not to the middle of its bounding box.
-        hazard_sel = [
+        # Two lighter queries in parallel beat one heavy query: asking for the
+        # geometry of every nearby feature in one go takes 24 seconds, while
+        # the roads with their real shape and the rest with just a centre
+        # point take 13 seconds together.
+        road_sel = [
             sel('way(around:%d,%.5f,%.5f)["highway"~"^(motorway|trunk|primary|secondary)$"]'),
+        ]
+        rest_sel = [
             sel('nwr(around:%d,%.5f,%.5f)["landuse"="industrial"]'),
             sel('nwr(around:%d,%.5f,%.5f)["power"="plant"]'),
             sel('nwr(around:%d,%.5f,%.5f)["man_made"="works"]'),
@@ -281,21 +292,31 @@ class OverpassSource(BaseSource):
             sel('nwr(around:%d,%.5f,%.5f)["natural"="water"]'),
             sel('nwr(around:%d,%.5f,%.5f)["waterway"~"^(river|canal|riverbank|dock)$"]'),
             sel('nwr(around:%d,%.5f,%.5f)["landuse"~"^(forest|grass|meadow|orchard)$"]'),
+            sel('nwr(around:%d,%.5f,%.5f)["natural"~"^(wood|scrub|grassland)$"]'),
             sel('nwr(around:%d,%.5f,%.5f)["leisure"~"^(park|garden|nature_reserve)$"]'),
         ]
-        q_hazard = (
-            "[out:json][timeout:20];(\n  "
-            + ";\n  ".join(hazard_sel)
-            + ";\n);\nout geom tags 800;"
+        # The roads keep their real geometry, so the distance to a busy road
+        # is measured to the road and not to the middle of it.
+        q_road = (
+            "[out:json][timeout:20];(\n  " + ";\n  ".join(road_sel) + ";\n);\nout geom tags 300;"
+        )
+        # Everything else only needs a centre point.
+        q_rest = (
+            "[out:json][timeout:20];(\n  " + ";\n  ".join(rest_sel) + ";\n);\nout center tags 400;"
         )
         cache_key = f"hazards:{lat:.4f}:{lon:.4f}:{radius_m}"
 
         async def _fetch(self_src: OverpassSource):
-            data = await self_src._run(q_hazard)
-            if data is None:
+            road_data, rest_data = await asyncio.gather(
+                self_src._run(q_road),
+                self_src._run(q_rest),
+            )
+            if road_data is None and rest_data is None:
                 raise RuntimeError("all Overpass mirrors failed")
             hazards: list[Hazard] = []
-            if data:
+            for data in (road_data, rest_data):
+                if not data:
+                    continue
                 for el in data.get("elements", []):
                     tags = el.get("tags") or {}
                     kind = self_src._hazard_kind(tags)

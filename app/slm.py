@@ -41,6 +41,11 @@ ACTIVITIES = [
     "photography",
 ]
 
+# The schema is deliberately small. Every field here is either used by the
+# pipeline or derived in code, and each one costs grammar time: a bigger
+# schema made the parse take 11 seconds instead of 4.
+#  - hour is read from the question by the planner, not from the model
+#  - out_of_scope is decided by the question, not by the model
 INTENT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -75,7 +80,6 @@ INTENT_SCHEMA: dict[str, Any] = {
                 "none",
             ],
         },
-        "hour": {"type": ["integer", "null"]},
         "profile": {
             "type": "array",
             "items": {
@@ -83,22 +87,10 @@ INTENT_SCHEMA: dict[str, Any] = {
                 "enum": ["asthma", "senior", "child", "pregnancy", "none"],
             },
         },
-        "out_of_scope": {"type": "boolean"},
     },
-    "required": [
-        "activity",
-        "location",
-        "day",
-        "part_of_day",
-        "hour",
-        "profile",
-        "out_of_scope",
-    ],
+    "required": ["activity", "location", "day", "part_of_day", "profile"],
 }
 
-# The engine writes the proof (the reasons with their evidence), so the
-# model only has to produce the sentence a person reads and the practical
-# advice. That keeps the prompt small, which matters on a CPU.
 CHOICE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -342,7 +334,7 @@ class SLM:
     # ------------------------------------------------------------------ API
     def parse_intent(self, question: str, now_iso: str) -> dict[str, Any]:
         user = f"Today is {now_iso} (IST). Question: {question}"
-        data = self._complete_json(PARSER_SYSTEM, user, INTENT_SCHEMA, max_tokens=220)
+        data = self._complete_json(PARSER_SYSTEM, user, INTENT_SCHEMA, max_tokens=160)
         data["_raw_question"] = question
         return data
 
@@ -354,12 +346,12 @@ class SLM:
                 return "?"
             return round(float(value), digits)
 
+        # The prompt is kept short on purpose: every token costs time on a
+        # CPU, and the model only needs enough to pick and name a place.
         table = "\n".join(
             f"{o['slot_id']} | {o['place']} | {o['time']} | score {number(o['score'])} | "
-            f"temp {number(o.get('apparent_temp_c'))}C | AQI {number(o.get('us_aqi'))} | "
-            f"precip {number(o.get('precip_prob'))}% | wind {number(o.get('wind_kmh'))}km/h from "
-            f"{o.get('wind_dir')} | travel {number(o.get('travel_min'))} min | "
-            f"exposure {number(o.get('exposure'), 2)}"
+            f"{number(o.get('apparent_temp_c'))}C | AQI {number(o.get('us_aqi'))} | "
+            f"rain {number(o.get('precip_prob'))}%"
             for o in options
         )
         # The prompt is kept small on purpose: every token costs time on a

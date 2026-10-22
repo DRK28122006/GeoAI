@@ -201,9 +201,15 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
     venues = venue_res.data or []
     if not venue_res.ok:
         limitations.append(f"Overpass venue lookup failed: {venue_res.error}")
-    # merge the Nominatim results
+    # Merge the Nominatim results. Nominatim returns its own relevance
+    # order, so the venues it found are the ones a person would recognise,
+    # and they go first. The Overpass venues fill the rest.
     nom_venues = nom_venue_res.data or []
     status["nominatim_venues"] = bool(nom_venues)
+    # The Overpass venues come first: they are found by tag, so they are
+    # the actual parks, pitches and courts. The Nominatim results are a
+    # fallback for when Overpass is unavailable, and they are less precise -
+    # a search for a park in a city can answer with a road.
     for nv in nom_venues:
         if any(
             abs(nv["lat"] - v.lat) < 0.002 and abs(nv["lon"] - v.lon) < 0.002
