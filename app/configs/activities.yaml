@@ -16,8 +16,7 @@ defaults: &defaults
   precip_prob_limit: 60         # % - hard disqualifier above this
   temp_limit_c: 37              # apparent temperature hard limit
   ventilation_weight: 2.0       # how much local PM2.5 matters for this activity
-  daylight_required: false
-  lit_ok: true                  # can a lit venue be used after dark
+  daylight_required: false                  # can a lit venue be used after dark
   duration_min: 60
   uv_limit: 9
 
@@ -31,7 +30,6 @@ running:
   precip_prob_limit: 60
   ventilation_weight: 3.0
   daylight_required: false
-  lit_ok: true
   duration_min: 45
   overpass:
     - '["leisure"~"^(track|fitness_track|running_track)$"]'
@@ -99,7 +97,6 @@ cricket:
   precip_prob_limit: 40
   temp_limit_c: 36
   ventilation_weight: 2.0
-  lit_ok: true
   duration_min: 120
   overpass:
     - '["leisure"="pitch"]["sport"~"^(cricket)$"]'
@@ -121,7 +118,6 @@ football:
   rain_tolerance: low
   precip_prob_limit: 50
   ventilation_weight: 2.5
-  lit_ok: true
   duration_min: 90
   overpass:
     - '["leisure"="pitch"]["sport"~"^(soccer|football|futsal)$"]'
@@ -143,7 +139,6 @@ tennis:
   rain_tolerance: very_low
   precip_prob_limit: 35
   ventilation_weight: 1.8
-  lit_ok: true
   duration_min: 90
   overpass:
     - '["leisure"="tennis_court"]'
@@ -189,7 +184,6 @@ picnic:
   precip_prob_limit: 35
   temp_limit_c: 34
   ventilation_weight: 1.0
-  lit_ok: false
   duration_min: 120
   overpass:
     - '["leisure"~"^(park|garden|recreation_ground|picnic_site)$"]'
@@ -211,7 +205,6 @@ event:
   precip_prob_limit: 30
   temp_limit_c: 35
   ventilation_weight: 1.0
-  lit_ok: true
   duration_min: 180
   overpass:
     - '["leisure"~"^(park|garden|recreation_ground)$"]'

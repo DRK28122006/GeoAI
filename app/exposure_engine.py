@@ -318,7 +318,8 @@ class ExposureEngine:
         if wind_kmh is not None and wind_kmh > comfort:
             score -= min(60.0, (wind_kmh - comfort) * 2.2)
         if gusts is not None and wind_kmh is not None and gusts > wind_kmh * 1.3:
-            score -= min(20.0, (gusts - wind_kmh) * 0.5)
+            factor = float(self.weights["wind"].get("gust_penalty_factor", 1.6))
+            score -= min(20.0, (gusts - wind_kmh) * 0.5 * factor)
         if precip_prob:
             tolerance = RAIN_TOLERANCE.get(
                 str(act.get("rain_tolerance", "low")), 1.0
@@ -379,6 +380,9 @@ class ExposureEngine:
         if travel_min is None:
             return 60.0
         duration = float(act.get("duration_min", 60))
+        # A short activity means a long trip is not worth it, so the penalty
+        # is scaled by how long the person is actually going to be out.
+        duration = max(duration, float(act.get("min_duration_min", 0) or 0))
         penalty = (
             travel_min
             * float(self.weights["travel"]["penalty_per_min"])
@@ -404,6 +408,8 @@ class ExposureEngine:
 
         pm25_limit = float(self.weights["air"]["pm25_limit_ug_m3"])
         temp_limit = float(act.get("temp_limit_c", 37))
+        uv_limit = float(act.get("uv_limit", 11))
+        min_duration = float(act.get("duration_min", 60))
         limit_activity = False
         exposure_weight = 1.0
         air_weight = 1.0
@@ -411,6 +417,11 @@ class ExposureEngine:
         for cfg in profiles.values():
             pm25_limit = min(pm25_limit, float(cfg.get("pm25_limit", 90)))
             o3_limit = min(o3_limit, float(cfg.get("o3_limit", 200)))
+            uv_limit = min(uv_limit, float(cfg.get("uv_limit", 11)))
+            # a short activity means a long trip is not worth it
+            min_duration = max(
+                min_duration, float(cfg.get("min_duration_min", 0) or 0)
+            )
             limit_activity = limit_activity or bool(cfg.get("limit_activity"))
             temp_limit = min(temp_limit, float(cfg.get("temp_limit_c", 34)))
             exposure_weight *= float(cfg.get("exposure_weight", 1.0))
@@ -550,6 +561,8 @@ class ExposureEngine:
                     reasons.append(f"local PM2.5 {local_pm25:.0f} ug/m3 is above the {pm25_limit:.0f} limit")
                 if o3 is not None and o3 > o3_limit:
                     reasons.append(f"ozone {o3:.0f} ug/m3 is above the {o3_limit:.0f} limit")
+                if uv is not None and uv > uv_limit:
+                    reasons.append(f"UV {uv:.0f} is above the {uv_limit:.0f} limit")
                 if not is_day and not act.get("night_ok", False):
                     if act.get("daylight_required"):
                         reasons.append("this activity needs daylight")

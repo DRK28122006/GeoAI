@@ -71,7 +71,17 @@ exposure) plus the evidence bundle. Output is a JSON object:
 ```
 
 The model is asked for JSON and the output is **constrained by a grammar**
-compiled from the schema, so the structure is always valid. A separate
+compiled from the schema, so the structure is always valid.
+
+The exact schemas are published next to this card, so the contract is
+inspectable rather than described:
+
+| File | What it is |
+| --- | --- |
+| `intent.schema.json` | the schema the parser is constrained to |
+| `choice.schema.json` | the schema the chooser is constrained to |
+| `prompts.md` | both system prompts, and how thinking is switched off |
+| `serving_config.json` | how the model is served, and the measured speed | A separate
 rule-based verifier then re-checks every number, clock time, place name and
 evidence citation in the model's wording against the fetched data. If a check
 fails the model is asked once more; if it fails again the answer is produced
@@ -120,6 +130,26 @@ Qwen3 emits a reasoning block by default. We disable it by pre-seeding an
 empty `<think>\n\n</think>` block in the assistant turn, which is the
 officially supported way to switch thinking off, and which keeps the answer
 short enough for CPU inference.
+
+This is not cosmetic. With thinking enabled the JSON grammar is not always
+enforced (llama.cpp issue 20345), and the answer would not be parseable. The
+guard is covered by a test in the application repository.
+
+## The GGUF in this repository
+
+`Qwen3-1.7B-Q4_K_M.gguf` is a **third-party quantisation** of the base model
+by the [unsloth](https://huggingface.co/unsloth) organisation, Apache-2.0, and
+it is the exact file the service loads. It is included so the repository is a
+faithful mirror of what runs in production, not so it can be loaded with
+`transformers`.
+
+```python
+from llama_cpp import Llama
+
+llm = Llama.from_pretrained(
+    "<this-repo>", filename="Qwen3-1.7B-Q4_K_M.gguf", n_ctx=4096
+)
+```
 
 ## Chat template note
 
