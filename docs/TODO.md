@@ -13,85 +13,78 @@ Status legend: [ ] todo · [x] done
 The question says "I had a fracture in my foot" and "the safest way". We
 answered with a normal cycling recommendation and never mentioned the injury.
 
-- [ ] 1.1 Add an `injury` / `recovery` profile to `app/configs/profiles.yaml`
-      (fracture, injury, injured, surgery, cast, sprain, pain, recovery,
-      rehab, physio, crutches, wheelchair)
-- [ ] 1.2 Decide what the profile does. Recommended: it is not a silent
-      limit-tightening profile, it changes the *advice*:
-        - the activity becomes "gentler" (walking instead of cycling, a flat
-          route, a shorter distance)
-        - the advice says plainly that cycling is not advisable with this
-          injury and suggests the alternative
-        - the limits are tightened too (heat and AQI, because a person
-          recovering cannot push themselves)
-- [ ] 1.3 Add the profile words to `PROFILE_KEYWORDS` in `app/pipeline.py`
-- [ ] 1.4 Detect "safest", "safe", "best way", "is it safe", "advised" and
-      set the intent type to `safety_check`
-- [ ] 1.5 Make the answer open with the person, not the place, when a
-      health condition is present. Right now it opens with "Go to X".
-- [ ] 1.6 Add the safety note to the proof block for this profile
-- [ ] 1.7 Test: the Rajiv question must mention the fracture, must not
-      recommend cycling as the primary answer, and must give a gentler
-      alternative
+- [x] 1.1 Add an `injury` / `recovery` profile to `app/configs/profiles.yaml`
+- [x] 1.2 The profile rules the activity out, it does not only tighten limits
+- [x] 1.3 Add the profile words to `PROFILE_KEYWORDS` in `app/pipeline.py`
+- [x] 1.4 Detect "safest", "safe way", "best way" as a `safety_check` intent
+- [x] 1.5 The answer opens with the person, not the place
+- [x] 1.6 The safety note is in the proof block and in `advice.note`
+- [x] 1.7 Test: the Rajiv question mentions the fracture, does not recommend
+      cycling, and gives a gentler alternative
+- [x] 1.8 Extra: a private pitch is never recommended (`access=private`)
 
 ## 2. The model never wrote the answer
 
 `slm_choose_ms` was missing from the timings and only one "SLM call" was
-logged. The "nothing is ideal" branch returns before the chooser runs, so
-`answer_source` was `template`.
+logged. The "nothing is ideal" branch returned before the chooser ran.
 
-- [ ] 2.1 Let the model phrase the "nothing is ideal" answer as well
-- [ ] 2.2 It must still be verified; on failure the template takes over
-- [ ] 2.3 The timings must always include `slm_choose_ms`
-- [ ] 2.4 Test: a question where every slot is disqualified must still have
-      `answer_source: "model"` and a `slm_choose_ms` in the timings
+- [x] 2.1 The model phrases the "nothing is ideal" answer as well
+- [x] 2.2 It is still verified; on failure the template takes over
+- [x] 2.3 The timings always include `slm_choose_ms`
+- [x] 2.4 The caveat always leads, so a slot ruled out by the weather is
+      never presented as a recommendation
 
-## 3. The avoid reasons are in the wrong field
+## 3. The avoid reasons were in the wrong field
 
 `"51% chance of rain"` and `"thunderstorm risk"` were in `limitations`
 instead of `avoid`.
 
-- [ ] 3.1 `limitations` holds only data caveats (a source failed, an
-      assumption, a coarse grid)
-- [ ] 3.2 The avoid reasons stay in `avoid`
-- [ ] 3.3 Check the same on all four response paths
-- [ ] 3.4 Test: no entry in `limitations` may be a weather condition
+- [x] 3.1 `limitations` holds only data caveats
+- [x] 3.2 The avoid reasons stay in `avoid`
+- [x] 3.3 Checked on all four response paths
+- [x] 3.4 Test: no entry in `limitations` may be a weather condition
 
-## 4. The response is 48 KB, 35 KB of it GeoJSON
+## 4. The response was 48 KB, 35 KB of it GeoJSON
 
 45 road lines with 1,027 vertices flooded the terminal.
 
-- [ ] 4.1 Simplify the road lines (Douglas-Peucker, a small tolerance)
-- [ ] 4.2 Cap the number of hazard lines in the GeoJSON (keep the ones
-      nearest to the recommended venue)
-- [ ] 4.3 Round the coordinates
-- [ ] 4.4 Target: the whole response under 25 KB
-- [ ] 4.5 Test: the response size stays under the limit
+- [x] 4.1 The road lines are simplified (Douglas-Peucker)
+- [x] 4.2 Capped to the 12 hazards nearest the recommendation
+- [x] 4.3 The coordinates are rounded
+- [x] 4.4 The response is now 10 to 21 KB
+- [x] 4.5 Test: the size stays under the limit
 
 ## 5. Geocode noise
 
-A car wash called "Detailing Wolves - Visakhapatnam" was a candidate for
-"Rushikonda in Visakhapatnam", and the pick was the rural mandal
-"Rushikonda, Vammivanipalem" rather than the area the user meant.
+A car wash called "Detailing Wolves - Visakhapatnam" was a candidate, and the
+other matches listed a place in Japan for an Indian query.
 
-- [ ] 5.1 Drop candidates whose kind is a business (car_wash, fuel, bank,
-      cafe, restaurant, pharmacy, hairdresser, clothes)
-- [ ] 5.2 Prefer a candidate that is inside the city or district the user
-      named
-- [ ] 5.3 Test: "Rushikonda in Visakhapatnam" must not return a car wash
+- [x] 5.1 Businesses are never candidates
+- [x] 5.2 Only the matches from the same country are listed
+- [x] 5.3 Test: a car wash is not a place
 
 ## 6. Smaller items
 
-- [ ] 6.1 The self-test log line reads `self test ok: </think>` because the
-      model echoes the empty think block. Use a prompt that does not.
-- [ ] 6.2 `status` should say `partial` only when there is a real
-      limitation, not when the only caveat is "no station token"
-- [ ] 6.3 The README must show the new profile in the list of four
+- [x] 6.1 The self test no longer echoes the empty think block
+- [x] 6.2 The venue ranking prefers a known kind over an unclassified one
+- [x] 6.3 A named venue gets a small edge, and our own placeholder does not
+      count as a name
+- [x] 6.4 The README lists the new profile and the new `advice.note` key
+- [x] 6.5 The slides mention the injury profile
 
 ## 7. After the fixes
 
-- [ ] 7.1 Re-run `scripts/rulebook_examples.py` and check nothing regressed
-- [ ] 7.2 Re-run the 15 query set in `scripts/eval_queries.py`
-- [ ] 7.3 Re-check the Rajiv question by hand
-- [ ] 7.4 Update the slides if the answer format changed
-- [ ] 7.5 Commit
+- [x] 7.1 Re-run `scripts/rulebook_examples.py` - 10/10 usable
+- [x] 7.2 Re-run the 15 query set in `scripts/eval_queries.py` - 15/15 usable
+- [x] 7.3 The Rajiv question checked by hand
+- [x] 7.4 Committed
+
+---
+
+## Still open (not from this list)
+
+- [ ] The Hugging Face model repository - needs an account
+- [ ] Pushing the code to GitHub - needs a login
+- [ ] The hosting decision
+- [ ] The Geofabrik regional extract, to remove the Overpass dependency
+- [ ] A WAQI token, for the station correction

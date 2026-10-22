@@ -516,7 +516,15 @@ class ExposureEngine:
 
                 # A named place is more use to a person than an unnamed
                 # patch of grass, so a small edge goes to the named ones.
-                if venue.name and not venue.name.startswith("Unnamed"):
+                # Our own placeholder for an unnamed feature does not count
+                # as a name.
+                placeholder = (
+                    "no name in OpenStreetMap",
+                    "Unnamed",
+                )
+                if venue.name and not any(
+                    marker in venue.name for marker in placeholder
+                ):
                     total += 2.0
 
                 # ------------------------------------------------ constraints
