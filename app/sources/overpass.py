@@ -15,7 +15,6 @@ Fixes that matter (each one was a real failure in the previous version):
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import Any
@@ -50,6 +49,11 @@ class Hazard(BaseModel):
 
 
 class OverpassSource(BaseSource):
+    # Shared across requests: when the mirrors start refusing us, we stop
+    # asking for a while instead of burning the user's time on every question.
+    _cooldown_until: float = 0.0
+    _consecutive_failures: int = 0
+
     def __init__(self):
         super().__init__("overpass", rate_limit=1)
         with open(CONFIG_DIR / "activities.yaml", "r", encoding="utf-8") as f:
@@ -108,6 +112,9 @@ class OverpassSource(BaseSource):
 
     async def _run(self, query: str, budget: float | None = None) -> dict | None:
         """POST the query to each mirror until one answers, inside a budget."""
+        if time.monotonic() < OverpassSource._cooldown_until:
+            logger.warning("Overpass is in a cooldown, skipping the lookup")
+            return None
         budget = budget if budget is not None else settings.OVERPASS_BUDGET_S
         deadline = time.monotonic() + budget
         for mirror in settings.OVERPASS_MIRRORS:
@@ -119,7 +126,16 @@ class OverpassSource(BaseSource):
                 mirror, query, timeout=min(settings.OVERPASS_TIMEOUT, remaining)
             )
             if data is not None:
+                OverpassSource._consecutive_failures = 0
+                OverpassSource._cooldown_until = 0.0
                 return data
+        OverpassSource._consecutive_failures += 1
+        if OverpassSource._consecutive_failures >= 2:
+            OverpassSource._cooldown_until = time.monotonic() + 60
+            logger.warning(
+                "Overpass failed %s times in a row, cooling down for 60s",
+                OverpassSource._consecutive_failures,
+            )
         return None
 
     # ----------------------------------------------------------------- venues
@@ -247,37 +263,30 @@ class OverpassSource(BaseSource):
         def sel(template: str) -> str:
             return template % (radius_m, lat, lon)
 
-        road_sel = [
+        # One query, not two: the public mirrors throttle under load and each
+        # round trip costs the user seconds. The output mode keeps the full
+        # geometry, so the distance to a road is measured to the road itself
+        # and not to the middle of its bounding box.
+        hazard_sel = [
             sel('way(around:%d,%.5f,%.5f)["highway"~"^(motorway|trunk|primary|secondary)$"]'),
             sel('nwr(around:%d,%.5f,%.5f)["landuse"="industrial"]'),
             sel('nwr(around:%d,%.5f,%.5f)["power"="plant"]'),
             sel('nwr(around:%d,%.5f,%.5f)["man_made"="works"]'),
             sel('nwr(around:%d,%.5f,%.5f)["landuse"="landfill"]'),
-        ]
-        green_sel = [
             sel('nwr(around:%d,%.5f,%.5f)["natural"="water"]'),
             sel('nwr(around:%d,%.5f,%.5f)["waterway"~"^(river|canal|riverbank|dock)$"]'),
             sel('nwr(around:%d,%.5f,%.5f)["landuse"~"^(forest|grass|meadow|orchard)$"]'),
-            sel('nwr(around:%d,%.5f,%.5f)["natural"~"^(wood|scrub|grassland)$"]'),
             sel('nwr(around:%d,%.5f,%.5f)["leisure"~"^(park|garden|nature_reserve)$"]'),
         ]
-        q_road = (
-            "[out:json][timeout:18];(\n  " + ";\n  ".join(road_sel) + ";\n);\nout geom tags 80;"
-        )
-        q_green = (
-            "[out:json][timeout:18];(\n  " + ";\n  ".join(green_sel) + ";\n);\nout center tags 120;"
+        q_hazard = (
+            "[out:json][timeout:20];(\n  " + ";\n  ".join(hazard_sel) + ";\n);\nout geom tags 120;"
         )
         cache_key = f"hazards:{lat:.4f}:{lon:.4f}:{radius_m}"
 
         async def _fetch(self_src: OverpassSource):
-            road_data, green_data = await asyncio.gather(
-                self_src._run(q_road),
-                self_src._run(q_green),
-            )
+            data = await self_src._run(q_hazard)
             hazards: list[Hazard] = []
-            for data in (road_data, green_data):
-                if not data:
-                    continue
+            if data:
                 for el in data.get("elements", []):
                     tags = el.get("tags") or {}
                     kind = self_src._hazard_kind(tags)
