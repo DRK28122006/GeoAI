@@ -61,13 +61,45 @@ def _midnight(dt: datetime) -> datetime:
     return dt.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+_WORD_HOURS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "noon": 12,
+    "midnight": 0, "half": 0,
+}
+
+
 def _parse_clock(text: str) -> int | None:
     """'2pm', '2 pm', 'at 14:30', 'around 5' -> hour (24h).
 
     Numbers that are clearly not clock times ('15 km', '5th phase', '2 days')
     are ignored.
     """
-    for m in re.finditer(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", text, re.IGNORECASE):
+    # "half past seven", "eight o'clock", "2pm", "14:30", "8.30"
+    m = re.search(
+        r"\bhalf\s+past\s+(" + "|".join(_WORD_HOURS) + r")\b", text, re.IGNORECASE
+    )
+    if m:
+        hour = _WORD_HOURS[m.group(1).lower()]
+        if hour == 12:
+            hour = 0
+        if "pm" in text[m.end() : m.end() + 6].lower():
+            hour = 12 if hour == 12 else hour + 12
+        return hour % 24
+    m = re.search(
+        r"\b(" + "|".join(_WORD_HOURS) + r")\s+o'?clock\b", text, re.IGNORECASE
+    )
+    if m:
+        word = m.group(1).lower()
+        if word in ("half", "noon", "midnight"):
+            return 0 if word != "noon" else 12
+        hour = _WORD_HOURS[word]
+        if "pm" in text[m.end() : m.end() + 6].lower() and hour < 12:
+            hour += 12
+        return hour
+
+    for m in re.finditer(
+        r"\b(\d{1,2})(?:(?::|\.)(\d{2}))?\s*(am|pm)?\b", text, re.IGNORECASE
+    ):
         tail = text[m.end() : m.end() + 12].lower()
         if re.match(r"\s*(st|nd|rd|th)\b", tail):
             continue  # ordinal, e.g. "5th phase"
@@ -145,6 +177,7 @@ def resolve(
 
     # --------------------------------------------------------- which days?
     raw_day = None
+    raw_days: list[int] = []
     if re.search(r"\bnext weekend\b", raw):
         raw_day = "next_weekend"
     elif re.search(r"\bweekend\b", raw):
@@ -156,9 +189,14 @@ def resolve(
     elif re.search(r"\btoday\b|\bright now\b|\btonight\b|\bthis (?:evening|morning|afternoon)\b", raw):
         raw_day = "today"
     else:
-        wd = re.search(rf"\b({_DAY_WORDS})\b", raw)
-        if wd:
-            raw_day = wd.group(1)
+        # "Is Saturday or Sunday better" names two days and both have to be
+        # scored, otherwise the question cannot be answered.
+        named = re.findall(rf"\b({_DAY_WORDS})\b", raw)
+        if len(named) > 1:
+            raw_day = "__multiple__"
+            raw_days = [WEEKDAYS[n] for n in named]
+        elif named:
+            raw_day = named[0]
 
     chosen_day = raw_day or (day if day and day != "none" else None)
 
@@ -186,11 +224,23 @@ def resolve(
     elif chosen_day == "day_after":
         target_days = [_midnight(now) + timedelta(days=2)]
         day_label = "the day after tomorrow"
+    elif chosen_day == "__multiple__":
+        target_days = [
+            _next_weekday(now, weekday, allow_today=True) for weekday in raw_days
+        ]
+        target_days = sorted(set(target_days))
+        day_label = " and ".join(
+            d.strftime("%A") for d in target_days
+        ).lower()
     elif chosen_day in WEEKDAYS:
         target_days = [_next_weekday(now, WEEKDAYS[chosen_day], allow_today=True)]
         day_label = chosen_day
     else:
-        # no day named: today, then the following days
+        # no day named: today and the next couple of days, so a question
+        # without a time still gets a real choice. An explicit span ("in the
+        # next two days") is left exactly as it was asked for.
+        if not span_explicit:
+            span = max(span, 3)
         target_days = [_midnight(now) + timedelta(days=i) for i in range(span)]
         day_label = "today" if span == 1 else (day_label_hint or f"the next {span} days")
         day_is_fixed = False
@@ -222,8 +272,8 @@ def resolve(
     chosen_pod = raw_pod or (part_of_day if part_of_day and part_of_day != "none" else None)
 
     clock_hour = _parse_clock(raw) if raw else None
-    if clock_hour is None and not raw:
-        clock_hour = hour
+    # The model's own hour is deliberately ignored: it once reported 21 for a
+    # "morning walk". The question is the only authority on the time.
 
     if clock_hour is not None:
         hour_specified = True
@@ -272,8 +322,8 @@ def resolve(
         ]
         hours += [d.replace(hour=h) for d in target_days[1:] for h in range(6, 21)]
         assumptions.append(
-            "No specific time was given, so the remaining daylight today and the "
-            "following days were considered."
+            f"No specific time was given, so the remaining daylight today and the "
+            f"next {span - 1} days were considered."
         )
 
     # ------------------------------------------------- drop past hours

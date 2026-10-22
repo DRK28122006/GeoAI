@@ -142,6 +142,17 @@ avoid_note: one sentence on when to avoid going, or an empty string.
 
 Be brief. Use only numbers that appear in the options. Do not add facts."""
 
+def _split_chatml(prompt: str) -> tuple[str, str]:
+    """Split a ChatML prompt back into the system and the user turn."""
+    system = ""
+    user = ""
+    if "<|im_start|>system\n" in prompt:
+        system = prompt.split("<|im_start|>system\n", 1)[1].split("<|im_end|>", 1)[0]
+    if "<|im_start|>user\n" in prompt:
+        user = prompt.split("<|im_start|>user\n", 1)[1].split("<|im_end|>", 1)[0]
+    return system.strip(), user.strip()
+
+
 class SLMUnavailable(RuntimeError):
     """Raised when the model cannot be loaded or served."""
 
@@ -188,11 +199,37 @@ class SLM:
             self._loaded_at = time.time()
             self._load_error = None
             logger.info("SLM ready in %.1fs", time.time() - self._loaded_at)
-            return True
+            return self._self_test()
         except Exception as exc:  # noqa: BLE001
             self._load_error = str(exc)
             logger.error("Failed to load SLM: %s", exc)
             return False
+
+    def _self_test(self) -> bool:
+        """Check the model actually answers.
+
+        A silent failure here would turn the assistant into a rule based
+        template without anyone noticing, so it is checked at start-up.
+        """
+        try:
+            out = self._llm.create_completion(
+                prompt="<|im_start|>user\nReply with the word ready.<|im_end|>\n",
+                max_tokens=8,
+                temperature=0.0,
+            )
+            text = (out["choices"][0]["text"] or "").strip()
+        except Exception as exc:  # noqa: BLE001
+            self._load_error = f"self test failed: {exc}"
+            logger.error(self._load_error)
+            return False
+        if not text:
+            self._load_error = (
+                "the model returned an empty completion, so it is not usable"
+            )
+            logger.error(self._load_error)
+            return False
+        logger.info("self test ok: %s", text[:40])
+        return True
 
     def _server_ready(self) -> bool:
         try:
@@ -233,7 +270,7 @@ class SLM:
     def _complete_json(
         self, system: str, user: str, schema: dict[str, Any], max_tokens: int
     ) -> dict[str, Any]:
-        key = (system, user, max_tokens)
+        key = (system, user, max_tokens, json.dumps(schema, sort_keys=True))
         cached = self._cache.get(key)
         if cached is not None:
             logger.info("SLM cache hit for %s...", user[:60])
@@ -283,10 +320,13 @@ class SLM:
         self, prompt: str, schema: dict[str, Any], max_tokens: int
     ) -> dict[str, Any]:
         url = f"{settings.SLM_SERVER_URL}/v1/chat/completions"
+        # The ChatML string carries the system prompt, the user turn and the
+        # empty think block, so it is split back into a conversation here.
+        system, user = _split_chatml(prompt)
         payload = {
             "messages": [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": ""},
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
             ],
             "response_format": {
                 "type": "json_schema",

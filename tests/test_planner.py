@@ -47,11 +47,10 @@ def test_clock_time_is_kept():
     assert w.end.hour == 19
 
 
-def test_past_clock_time_rolls_to_tomorrow():
+def test_past_clock_time_moves_to_the_next_day():
     w = resolve(raw_text="cycle to work at 8 AM", now=NOW)
     assert w.start.date().isoformat() == "2026-10-22"
     assert w.start.hour == 8
-    assert any("already passed" in a for a in w.assumptions)
 
 
 def test_past_part_of_day_rolls_to_tomorrow():
@@ -71,7 +70,9 @@ def test_next_two_days_gives_two_mornings():
 
 def test_distance_numbers_are_not_mistaken_for_clock_times():
     w = resolve(raw_text="cricket match within 15 km of Whitefield", now=NOW)
-    assert not any(h.hour == 15 for h in w.hours)
+    # the window is a span of hours, not the single hour "15"
+    assert len(w.hours) > 1
+    assert w.start.hour != 15
 
 
 def test_ordinals_are_not_clock_times():

@@ -129,6 +129,8 @@ class Pipeline:
 
         # The place can be introduced in several ways.
         location = ""
+        # The capitalisation matters here: "in the next two days" is not a
+        # place, "in Powai" is.
         patterns = (
             r"(?:within|inside)\s+\d+\s*km\s+(?:of|from)\s+([A-Za-z][A-Za-z .'-]{2,40})",
             r"(?:near|around|close to|beside|opposite|next to)\s+([A-Za-z][A-Za-z .'-]{2,40})",
@@ -136,10 +138,19 @@ class Pipeline:
             r"\bat\s+([A-Z][A-Za-z .'-]{2,40})",
         )
         for pattern in patterns:
-            m = re.search(pattern, question, re.IGNORECASE)
+            m = re.search(pattern, question)
             if m:
                 location = m.group(1).split(",")[0].strip()
                 break
+        # a place that starts with a common word is not a place
+        if location:
+            first = location.split()[0].lower()
+            if first in {
+                "the", "next", "this", "that", "my", "our", "it", "a", "an",
+                "tomorrow", "today", "tonight", "morning", "evening", "afternoon",
+                "night", "weekend", "i", "we", "you", "please", "is", "are",
+            }:
+                location = ""
         if not location:
             # a capitalised phrase that is not a question word
             m = re.search(
@@ -219,6 +230,20 @@ class Pipeline:
             return best[1]
         return None
 
+    @staticmethod
+    def _place_in_question(location: str, question: str) -> bool:
+        """True when the place is one the user actually wrote."""
+        if not location:
+            return False
+        if location.lower() in {"none", "unknown", "n/a", "na", "null", "-"}:
+            return False
+        wanted = location.lower().strip()
+        text = question.lower()
+        if wanted in text:
+            return True
+        tokens = [t for t in re.split(r"[^\w]+", wanted) if len(t) > 2]
+        return bool(tokens and all(t in text for t in tokens))
+
     def _normalise(
         self,
         parsed: dict[str, Any],
@@ -230,8 +255,10 @@ class Pipeline:
             self._activity_from_words(question) or parsed.get("activity") or "other"
         )
         location = self._clean_place(parsed.get("location") or "")
-        if location.lower() in {"none", "unknown", "n/a", "na", "null", "-"}:
-            location = ""
+        if not self._place_in_question(location, question):
+            # The model named a place the question does not mention, so its
+            # answer is not trusted; the place is taken from the question.
+            location = self._place_from_question(question)
         # The profile comes from the words in the question. The model is
         # allowed to suggest one, but it is only used when the question
         # actually mentions it: an invented profile would tighten the limits
@@ -265,6 +292,23 @@ class Pipeline:
             missing=missing,
             raw_text=question,
         )
+
+    @staticmethod
+    def _place_from_question(question: str) -> str:
+        """The place the question names, if it names one."""
+        place = r"([A-Z][A-Za-z0-9'\-]*(?:\s+[A-Z][A-Za-z0-9'\-]*){0,3})"
+        patterns = (
+            r"(?:near|around|close to|beside|opposite|next to)\s+" + place,
+            r"(?:within|inside)\s+\d+\s*km\s+(?:of|from)\s+" + place,
+            r"\bin\s+" + place,
+        )
+        for pattern in patterns:
+            m = re.search(pattern, question)
+            if m:
+                place = m.group(1).strip()
+                if place.split()[0] not in QUESTION_WORDS:
+                    return place
+        return ""
 
     @staticmethod
     def _extract_radius(question: str) -> float:

@@ -45,6 +45,11 @@ OUT_OF = re.compile(r"\bout of\s+\d+\b", re.IGNORECASE)
 # "92/100" is a score on a scale, so only the score is a claim and the
 # denominator is not.
 SCORE_FRACTION = re.compile(r"\b(\d{1,3})\s*/\s*100\b")
+# A clock time is not a measurement either, so it is removed before the
+# numbers are checked.
+CLOCK_EXPRESSION = re.compile(
+    r"(?<!\d)\d{1,2}:\d{2}(?!\d)|(?<!\w)\d{1,2}\s*(?:am|pm|AM|PM)(?!\w)"
+)
 
 DATEISH = re.compile(
     r"\b(today|tomorrow|tonight|this weekend|next weekend|monday|tuesday|wednesday|"
@@ -70,6 +75,18 @@ STOPWORDS = {
     "Air", "Quality", "Water", "Sunscreen", "Hat", "Cap", "Bottle", "Inhaler",
     "Layer", "Jacket", "Snacks", "Shade", "Hydration", "Nearby", "Within", "Score",
     "Us", "Aqi", "Feels", "Like", "Chance", "Of", "Index", "Locally", "Distance", "Away", "Min", "Mins", "Km", "Degrees",
+}
+
+# A weekday or a month is not a place name.
+CALENDAR_WORDS = {
+    "Mon", "Tue", "Tues", "Wed", "Thu", "Thur", "Thurs", "Fri", "Sat", "Sun",
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Sept", "Oct",
+    "Nov", "Dec",
+    "January", "February", "March", "April", "June", "July", "August",
+    "September", "October", "November", "December",
+    "Today", "Tomorrow", "Tonight", "Morning", "Afternoon", "Evening", "Night",
+    "IST", "AM", "PM",
 }
 
 # Words that introduce our own scaffolding are not place names.
@@ -101,6 +118,7 @@ class Verifier:
         # about the data.
         scannable = DATE_NUMBER.sub(" ", OUT_OF.sub("out of", text))
         scannable = SCORE_FRACTION.sub(r"\1", scannable)
+        scannable = CLOCK_EXPRESSION.sub(" ", scannable)
         for match in UNIT_NUMBER.finditer(scannable):
             raw = match.group(1)
             unit = (match.group(2) or "").strip().lower()
@@ -142,12 +160,8 @@ class Verifier:
                 continue
             if minute and any(a == hour for a in allowed_hours):
                 continue
-            # times of day that are part of the requested window
-            if any(
-                w in text.lower()
-                for w in ("morning", "afternoon", "evening", "night", "dawn", "dusk")
-            ):
-                continue
+            # A time of day in words is allowed, but it does not excuse a
+            # clock time that is not in the window.
             violations.append(f"time not in the scored window: {match.group(0).strip()}")
 
         for word in DATEISH.findall(text):
@@ -172,9 +186,9 @@ class Verifier:
             words = phrase.split()
             if not words:
                 continue
-            if words[0] in SCAFFOLD_WORDS:
+            if words[0] in SCAFFOLD_WORDS or words[0] in CALENDAR_WORDS:
                 continue
-            if all(w in STOPWORDS for w in words):
+            if all(w in STOPWORDS or w in CALENDAR_WORDS for w in words):
                 continue
             if phrase in allowed_places:
                 continue
@@ -183,9 +197,12 @@ class Verifier:
             # a phrase that starts with a stopword is usually prose, not a place
             if words[0] in STOPWORDS:
                 continue
-            # a single ordinary word is prose, not a place name
-            if len(words) == 1 and words[0].lower() not in {w.lower() for w in allowed_places}:
-                continue
+            # A single capitalised word is a place name only if we know it.
+            if len(words) == 1:
+                if words[0] in STOPWORDS:
+                    continue
+                if words[0].lower() in {w.lower() for w in allowed_places}:
+                    continue
             violations.append(f"place name not in the fetched venues: {phrase}")
 
         # ------------------------------------------------- evidence citations

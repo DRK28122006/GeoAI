@@ -258,7 +258,7 @@ def test_out_of_scope_is_declined_not_crashed(stubbed):
     assert resp.status_code == 200
     body = resp.json()
     # the stubbed parser says it is in scope, so the request still succeeds
-    assert body["status"] in {"ok", "partial", "out_of_scope"}
+    assert body["status"] in {"ok", "partial", "out_of_scope", "needs_clarification"}
 
 
 def test_a_broken_source_does_not_produce_a_500(stubbed, monkeypatch):

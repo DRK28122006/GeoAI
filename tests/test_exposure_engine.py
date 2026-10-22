@@ -378,3 +378,43 @@ def test_verifier_rejects_a_time_outside_the_window(venues):
     facts = Verifier.build_facts(result, bundle)
     check = Verifier().verify("meet at 03:00 tomorrow", facts)
     assert not check.verified
+
+
+# ------------------------------------------------------- verifier regressions
+def _facts(hours=(9, 17), places=("Anuroopa Park",), numbers=(26.0, 43.0, 92.0)):
+    return {
+        "numbers": set(numbers),
+        "hours": set(hours),
+        "places": set(places),
+        "dates": {"thu 23 oct"},
+        "evidence": {"E_WEATHER", "E_AQ"},
+    }
+
+
+def test_verifier_accepts_a_dated_headline():
+    """The verifier used to read any two digit number as a clock time."""
+    check = Verifier().verify("Go to Anuroopa Park around 17:00 on Thu 23 Oct.", _facts())
+    assert check.verified, check.violations
+
+
+def test_verifier_accepts_a_score_out_of_hundred():
+    check = Verifier().verify("Anuroopa Park (score 92/100)", _facts())
+    assert check.verified, check.violations
+
+
+def test_verifier_rejects_a_single_unknown_place():
+    check = Verifier().verify("Go to Satara today.", _facts())
+    assert not check.verified
+    assert any("Satara" in v for v in check.violations)
+
+
+def test_verifier_rejects_a_clock_time_outside_the_window():
+    """A time of day in the sentence does not excuse a wrong clock time."""
+    check = Verifier().verify("Meet at 03:00 tomorrow evening.", _facts())
+    assert not check.verified
+
+
+def test_verifier_rejects_an_evidence_id_that_does_not_exist():
+    check = Verifier().verify("It is fine, see E99 for the details", _facts())
+    assert not check.verified
+    assert any("E99" in v for v in check.violations)
