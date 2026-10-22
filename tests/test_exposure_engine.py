@@ -27,6 +27,7 @@ IST = ZoneInfo("Asia/Kolkata")
 def make_bundle(
     *,
     venues,
+    radius_km: float = 5.0,
     wind_dir=270.0,
     wind_kmh=8.0,
     precip_prob=10,
@@ -89,8 +90,11 @@ def make_bundle(
         days_ahead = 1
         raw_text = "test"
 
+    intent = _Intent()
+    intent.radius_km = radius_km
+
     return {
-        "intent": _Intent(),
+        "intent": intent,
         "origin": _Origin(),
         "venues": venues,
         "weather": [weather] * (len(venues) + 1),
@@ -242,7 +246,8 @@ def test_profile_tightens_the_aqi_limit(venues):
     assert any("PM2.5" in a["reason"] for a in strict.avoid)
 
 
-def test_darkness_lowers_the_score_for_unlit_venues(venues):
+def test_darkness_lowers_the_score_for_lit_venues(venues):
+    """A lit venue can still be used after dark, but it scores lower."""
     engine = ExposureEngine()
     day_hours = [datetime(2026, 10, 22, 12, 0, tzinfo=IST)]
     night_hours = [datetime(2026, 10, 22, 21, 0, tzinfo=IST)]
@@ -250,11 +255,23 @@ def test_darkness_lowers_the_score_for_unlit_venues(venues):
     day = engine.score(make_bundle(venues=venues, hours=day_hours))
     night_bundle = make_bundle(venues=venues, hours=night_hours)
     night_bundle["weather"][0]["hourly"]["is_day"] = [0]
-    for v in venues:
-        v.lit = False
     night = engine.score(night_bundle)
 
     assert day.slots[0].breakdown["daylight"] > night.slots[0].breakdown["daylight"]
+
+
+def test_an_unlit_venue_is_out_after_dark(venues):
+    """Running in an unlit park at night is not a recommendation."""
+    engine = ExposureEngine()
+    night_bundle = make_bundle(
+        venues=venues, hours=[datetime(2026, 10, 22, 21, 0, tzinfo=IST)]
+    )
+    night_bundle["weather"][0]["hourly"]["is_day"] = [0]
+    for v in venues:
+        v.lit = False
+    result = engine.score(night_bundle)
+    assert not result.slots
+    assert any("dark" in a["reason"] for a in result.avoid)
 
 
 def test_darkness_disqualifies_daylight_only_activities(venues):
@@ -268,17 +285,17 @@ def test_darkness_disqualifies_daylight_only_activities(venues):
         v.lit = False
     result = engine.score(bundle)
     assert not result.slots
-    assert any("dark" in a["reason"] for a in result.avoid)
+    assert any("daylight" in a["reason"] for a in result.avoid)
 
 
 def test_travel_time_penalty_and_cap(venues):
     engine = ExposureEngine()
     near = engine.score(make_bundle(venues=venues, travel=300.0))
-    far = engine.score(make_bundle(venues=venues, travel=1800.0))
+    far = engine.score(make_bundle(venues=venues, travel=1800.0, radius_km=15.0))
     assert near.slots[0].breakdown["travel"] > far.slots[0].breakdown["travel"]
 
     # beyond the cap the slot is dropped entirely
-    too_far = engine.score(make_bundle(venues=venues, travel=3000.0))
+    too_far = engine.score(make_bundle(venues=venues, travel=3000.0, radius_km=15.0))
     assert not too_far.slots
     assert any("travel time" in a["reason"] for a in too_far.avoid)
 
@@ -289,6 +306,7 @@ def test_rush_hour_makes_the_trip_longer(venues):
     rush = engine.score(
         make_bundle(
             venues=venues,
+            radius_km=15.0,
             travel=1800.0,
             hours=[datetime(2026, 10, 22, 8, 0, tzinfo=IST)],
         )
@@ -296,6 +314,7 @@ def test_rush_hour_makes_the_trip_longer(venues):
     off_peak = engine.score(
         make_bundle(
             venues=venues,
+            radius_km=15.0,
             travel=1800.0,
             hours=[datetime(2026, 10, 22, 14, 0, tzinfo=IST)],
         )
@@ -311,6 +330,7 @@ def test_rush_hour_travel_can_breach_the_cap(venues):
     result = engine.score(
         make_bundle(
             venues=venues,
+            radius_km=15.0,
             travel=2400.0,
             hours=[datetime(2026, 10, 22, 8, 0, tzinfo=IST)],
         )

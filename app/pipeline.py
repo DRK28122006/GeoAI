@@ -19,7 +19,6 @@ import asyncio
 import logging
 import re
 import time
-from datetime import datetime
 from typing import Any
 
 from app.context import Intent, gather_context
@@ -105,8 +104,6 @@ class Pipeline:
         self.engine = ExposureEngine()
         self.verifier = Verifier()
         self.slm: SLM = slm
-        self.lat: float | None = None
-        self.lon: float | None = None
 
     # ------------------------------------------------------------ utilities
     @staticmethod
@@ -222,7 +219,13 @@ class Pipeline:
             return best[1]
         return None
 
-    def _normalise(self, parsed: dict[str, Any], question: str) -> Intent:
+    def _normalise(
+        self,
+        parsed: dict[str, Any],
+        question: str,
+        lat: float | None = None,
+        lon: float | None = None,
+    ) -> Intent:
         activity = (
             self._activity_from_words(question) or parsed.get("activity") or "other"
         )
@@ -243,7 +246,7 @@ class Pipeline:
         # deterministically: the model's job is the language, not the calendar.
         radius = self._extract_radius(question)
         intent_type = self._extract_intent_type(question)
-        missing = [] if (location or (self.lat is not None)) else ["location"]
+        missing = [] if (location or lat is not None) else ["location"]
         return Intent(
             activity=activity,
             location_text=location,
@@ -302,9 +305,7 @@ class Pipeline:
     async def run(
         self, question: str, lat: float | None = None, lon: float | None = None
     ) -> dict[str, Any]:
-        started = datetime.now()
         now = now_ist()
-        self.lat, self.lon = lat, lon
 
         # ---------------------------------------------------------- parse
         stage: dict[str, float] = {}
@@ -320,7 +321,7 @@ class Pipeline:
             parse_source = "rules"
         stage["slm_parse_ms"] = round((time.perf_counter() - t0) * 1000)
 
-        intent = self._normalise(parsed, question)
+        intent = self._normalise(parsed, question, lat, lon)
         if lat is not None and lon is not None:
             intent.lat, intent.lon = lat, lon
         if not intent.radius_km:
@@ -358,7 +359,7 @@ class Pipeline:
                 "advice": {"carry": [], "watch_for": []},
                 "evidence": {},
                 "map_geojson": {"type": "FeatureCollection", "features": []},
-                "data_as_of": started.isoformat(),
+                "data_as_of": now.isoformat(),
                 "sources": self._sources(),
                 "attribution": bundle.get("attribution", ""),
                 "limitations": bundle.get("limitations", []),
@@ -424,7 +425,7 @@ class Pipeline:
                 "evidence": bundle.get("evidence", {}),
                 "proof": self._build_proof(best, bundle, intent),
                 "map_geojson": self._geojson(bundle, engine_result.all_slots[:8]),
-                "data_as_of": started.isoformat(),
+                "data_as_of": now.isoformat(),
                 "sources": self._sources(),
                 "attribution": bundle.get("attribution", ""),
                 "limitations": _dedupe(
@@ -455,7 +456,7 @@ class Pipeline:
                 "advice": {"carry": [], "watch_for": []},
                 "evidence": bundle.get("evidence", {}),
                 "map_geojson": self._geojson(bundle, []),
-                "data_as_of": started.isoformat(),
+                "data_as_of": now.isoformat(),
                 "sources": self._sources(),
                 "limitations": _dedupe(extra),
                 "timings_ms": {**bundle.get("timings", {}), **stage},
@@ -513,16 +514,18 @@ class Pipeline:
                 logger.warning("SLM regeneration failed: %s", exc)
 
         if choice is None or not verification.verified:
-            # deterministic fallback: every line comes from the engine
+            # The model's wording was rejected, so none of it is published:
+            # the answer, the reasons and the advice all come from the
+            # engine. A rejected claim must never reach the user.
+            choice = None
             answer_text = self._template(chosen, engine_result, bundle)
-            verification = Verifier().verify("", facts)
             answer_source = "template"
         else:
             answer_text = self._compose(chosen, choice, top_slots, engine_result, bundle)
             answer_source = "model"
 
         return {
-            "status": "ok" if verification.verified else "partial",
+            "status": "ok" if answer_source == "model" else "partial",
             "clarification_question": None,
             "parsed": self._parsed_block(intent, bundle, parse_source),
             "recommendation": {
@@ -562,14 +565,15 @@ class Pipeline:
             "evidence": bundle.get("evidence", {}),
             "proof": self._build_proof(chosen, bundle, intent),
             "map_geojson": self._geojson(bundle, engine_result.slots[:8]),
-            "data_as_of": started.isoformat(),
+            "data_as_of": now.isoformat(),
             "sources": self._sources(),
             "attribution": bundle.get("attribution", ""),
-            "limitations": bundle.get("limitations", [])
-            + verification.violations,
+            "limitations": _dedupe(
+                bundle.get("limitations", []) + verification.violations
+            ),
             "timings_ms": {**bundle.get("timings", {}), **stage},
             "answer": answer_text,
-            "verified": verification.verified,
+            "verified": answer_source == "model",
             "answer_source": answer_source,
         }
 
@@ -854,7 +858,7 @@ class Pipeline:
                 k: {"source": v.get("source"), "value": v.get("value")}
                 for k, v in evidence.items()
             },
-            "data_as_of": datetime.now().isoformat(),
+            "data_as_of": now_ist().isoformat(),
         }
 
         if intent.profile:
@@ -889,15 +893,25 @@ class Pipeline:
         return {
             "status": "needs_clarification",
             "clarification_question": question,
-            "parsed": parsed,
+            "parsed": {
+                "activity": parsed.get("activity", ""),
+                "location": parsed.get("location", ""),
+                "radius_km": parsed.get("radius_km", 0),
+                "window": {},
+                "profile": parsed.get("profile", []),
+                "assumptions": [],
+                "parse_source": parsed.get("parse_source", ""),
+            },
             "recommendation": None,
             "alternatives": [],
             "avoid": [],
             "advice": {"carry": [], "watch_for": []},
             "evidence": {},
+            "proof": None,
             "map_geojson": {"type": "FeatureCollection", "features": []},
             "data_as_of": now_ist().isoformat(),
             "sources": self._sources(),
+            "attribution": "",
             "limitations": [],
             "timings_ms": {},
             "answer": question,
@@ -913,15 +927,25 @@ class Pipeline:
         return {
             "status": "out_of_scope",
             "clarification_question": None,
-            "parsed": {},
+            "parsed": {
+                "activity": "",
+                "location": "",
+                "radius_km": 0,
+                "window": {},
+                "profile": [],
+                "assumptions": [],
+                "parse_source": "",
+            },
             "recommendation": None,
             "alternatives": [],
             "avoid": [],
             "advice": {"carry": [], "watch_for": []},
             "evidence": {},
+            "proof": None,
             "map_geojson": {"type": "FeatureCollection", "features": []},
             "data_as_of": now_ist().isoformat(),
             "sources": self._sources(),
+            "attribution": "",
             "limitations": [],
             "timings_ms": {},
             "answer": msg,

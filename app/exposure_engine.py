@@ -39,6 +39,21 @@ WIND_DIRS = [
 THUNDERSTORM_CODES = {95, 96, 99}
 HEAVY_RAIN_CODES = {65, 67, 82, 86, 95, 96, 99}
 
+# How much each activity cares about wind, relative to the table below.
+WIND_SENSITIVITY = {
+    "low": 1.3,
+    "medium": 1.0,
+    "high": 0.8,
+    "very_high": 0.65,
+}
+
+# How much the chance of rain costs the activity.
+RAIN_TOLERANCE = {
+    "very_low": 1.6,
+    "low": 1.0,
+    "medium": 0.6,
+}
+
 
 def haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
     lat1, lon1 = a
@@ -254,32 +269,67 @@ class ExposureEngine:
             )
         return max(0.0, min(100.0, base))
 
-    def _air_score(self, local_pm25: float | None, us_aqi: float | None) -> float:
+    def _air_score(
+        self,
+        local_pm25: float | None,
+        us_aqi: float | None,
+        o3: float | None = None,
+    ) -> float:
+        """Score the air at the venue.
+
+        The forecast grid gives the same value for every venue in a city, so
+        the local estimate - the forecast corrected for what is downwind of
+        this particular place - is what makes this score differ between
+        venues. Ozone is included because it matters for sensitive people.
+        """
         bands = self.weights["aqi_bands"]
-        aqi = us_aqi
-        if aqi is None and local_pm25 is not None:
+        aqi = None
+        if local_pm25 is not None:
             # rough US AQI approximation from PM2.5 (CPCB-aligned breakpoints)
             aqi = min(500.0, (local_pm25 / 12.0) * 50.0)
+        elif us_aqi is not None:
+            aqi = us_aqi
         if aqi is None:
             return 50.0
+        score = 0.0
         for band in bands.values():
             if aqi <= float(band["max"]):
-                return float(band["score"])
-        return 0.0
+                score = float(band["score"])
+                break
+        if o3 is not None:
+            # ozone above 100 ug/m3 is the WHO guideline for a short exposure
+            if o3 > 100:
+                score -= min(30.0, (o3 - 100) * 0.3)
+            elif o3 > 80:
+                score -= 10.0
+        return max(0.0, min(100.0, score))
 
     def _wind_rain_score(
         self, wind_kmh: float | None, gusts: float | None, precip_prob: int | None, act: dict
     ) -> float:
-        comfort = float(
+        base = float(
             self.weights["wind"]["comfortable_kmh"].get(act.get("_key", "running"), 22)
         )
+        sensitivity = WIND_SENSITIVITY.get(
+            str(act.get("wind_sensitivity", "medium")), 1.0
+        )
+        comfort = base * sensitivity
         score = 100.0
         if wind_kmh is not None and wind_kmh > comfort:
             score -= min(60.0, (wind_kmh - comfort) * 2.2)
         if gusts is not None and wind_kmh is not None and gusts > wind_kmh * 1.3:
             score -= min(20.0, (gusts - wind_kmh) * 0.5)
         if precip_prob:
-            score -= min(60.0, (precip_prob / 10.0) * float(self.weights["rain"]["precip_prob_penalty"]) * 10)
+            tolerance = RAIN_TOLERANCE.get(
+                str(act.get("rain_tolerance", "low")), 1.0
+            )
+            score -= min(
+                60.0,
+                (precip_prob / 10.0)
+                * float(self.weights["rain"]["precip_prob_penalty"])
+                * 10
+                * tolerance,
+            )
         return max(0.0, min(100.0, score))
 
     def _daylight_score(self, when: datetime, sunrise: str | None, sunset: str | None, act: dict) -> float:
@@ -352,12 +402,14 @@ class ExposureEngine:
         act["_key"] = intent.activity
         profiles = self._profile_limits(intent.profile)
 
-        pm25_limit = 90.0
+        pm25_limit = float(self.weights["air"]["pm25_limit_ug_m3"])
         temp_limit = float(act.get("temp_limit_c", 37))
         exposure_weight = 1.0
         air_weight = 1.0
+        o3_limit = 200.0
         for cfg in profiles.values():
             pm25_limit = min(pm25_limit, float(cfg.get("pm25_limit", 90)))
+            o3_limit = min(o3_limit, float(cfg.get("o3_limit", 200)))
             temp_limit = min(temp_limit, float(cfg.get("temp_limit_c", 34)))
             exposure_weight *= float(cfg.get("exposure_weight", 1.0))
             air_weight *= float(cfg.get("air_weight", 1.0))
@@ -418,6 +470,9 @@ class ExposureEngine:
                     venue_hazards[vi], wind_from, wind_kmh, when.hour
                 )
                 exposure *= (1.0 - mitigations[vi]) * exposure_weight
+                # The cap has to hold after the mitigation and the profile
+                # weight, not before it.
+                exposure = min(exposure, float(self.weights["exposure"]["max_exposure"]))
                 local_pm25 = None
                 if pm25 is not None:
                     local_pm25 = float(pm25) * bias * (1.0 + beta * exposure)
@@ -427,8 +482,14 @@ class ExposureEngine:
 
                 # ---------------------------------------------------- scoring
                 comfort = self._comfort_score(temp, humidity, act)
-                air = self._air_score(local_pm25, us_aqi) * air_weight
-                air = max(0.0, min(100.0, air))
+                air = self._air_score(local_pm25, us_aqi, o3)
+                # The activity decides how much the air quality matters: a
+                # photographer cares less than a runner with asthma.
+                ventilation = float(act.get("ventilation_weight", 2.0))
+                air = max(
+                    0.0, min(100.0, 100.0 - (100.0 - air) * (ventilation / 2.0))
+                )
+                air = max(0.0, min(100.0, air * air_weight))
                 wind_rain = self._wind_rain_score(wind_kmh, gusts, precip_prob, act)
                 travel_at_time = (
                     None if travel_min is None else travel_min * self._travel_factor(when.hour)
@@ -459,17 +520,28 @@ class ExposureEngine:
                     reasons.append("thunderstorm risk")
                 if precip_prob is not None and precip_prob > float(act.get("precip_prob_limit", 60)):
                     reasons.append(f"{precip_prob}% chance of rain")
-                if code in HEAVY_RAIN_CODES and precip_prob is None:
+                if code in HEAVY_RAIN_CODES:
                     reasons.append("heavy rain in the forecast")
+                if (precip or 0) >= 4.0:
+                    reasons.append(f"{precip:.0f} mm of rain forecast")
                 if temp is not None and float(temp) > temp_limit:
                     reasons.append(f"apparent temperature {temp:.0f}C is above the {temp_limit:.0f}C limit")
                 if local_pm25 is not None and local_pm25 > pm25_limit:
                     reasons.append(f"local PM2.5 {local_pm25:.0f} ug/m3 is above the {pm25_limit:.0f} limit")
-                if act.get("daylight_required") and not is_day and not venue.lit:
-                    reasons.append("it is dark and this venue is not lit")
+                if o3 is not None and o3 > o3_limit:
+                    reasons.append(f"ozone {o3:.0f} ug/m3 is above the {o3_limit:.0f} limit")
+                if not is_day and not act.get("night_ok", False):
+                    if act.get("daylight_required"):
+                        reasons.append("this activity needs daylight")
+                    elif not venue.lit:
+                        reasons.append("it is dark and this venue is not lit")
+                travel_cap = max(
+                    20.0,
+                    float(intent.radius_km) * float(self.weights["travel"]["radius_min_per_km"]),
+                )
                 if (
                     travel_at_time is not None
-                    and travel_at_time > float(self.weights["travel"]["max_travel_min"])
+                    and travel_at_time > travel_cap
                 ):
                     reasons.append(
                         f"travel time {travel_at_time:.0f} min at that hour is too long"

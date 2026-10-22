@@ -131,7 +131,7 @@ def _bundle(activity: str = "running", profile: list[str] | None = None):
 def stubbed(monkeypatch):
     """Replace the model and the network with deterministic stand-ins."""
     monkeypatch.setattr(main_module.slm, "is_ready", lambda: True)
-    async def fake_parse(self, question, now_iso):
+    def fake_parse(self, question, now_iso):
         return {
             "activity": "running",
             "location": "JP Nagar",
@@ -145,7 +145,19 @@ def stubbed(monkeypatch):
     async def fake_gather(intent):
         return _bundle(intent.activity, intent.profile)
 
-    monkeypatch.setattr(main_module.pipeline.slm, "parse_intent", fake_parse)
+    def fake_choose(self, question, options, evidence):
+        # A well formed answer that only uses the values from the table.
+        top = options[0]
+        return {
+            "slot_id": top["slot_id"],
+            "headline": f"Go to {top['place']} around {top['time'][-5:]}.",
+            "carry": ["Water bottle", "Light layer"],
+            "watch_for": ["Air quality is moderate"],
+            "avoid_note": "Avoid the afternoon.",
+        }
+
+    monkeypatch.setattr(type(main_module.pipeline.slm), "parse_intent", fake_parse)
+    monkeypatch.setattr(type(main_module.pipeline.slm), "choose", fake_choose)
     monkeypatch.setattr("app.pipeline.gather_context", fake_gather)
     return True
 
@@ -206,6 +218,7 @@ def test_ask_returns_the_documented_shape(stubbed):
         assert key in body, f"missing key in the response: {key}"
 
     assert body["status"] == "ok"
+    assert body["answer_source"] == "model"
     rec = body["recommendation"]
     assert rec["place"] == "Anuroopa Park"
     assert rec["score"] > 0

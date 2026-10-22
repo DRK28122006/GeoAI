@@ -51,12 +51,18 @@ travel:
   # penalty per minute of travel, scaled by activity duration
   penalty_per_min: 0.55
   max_travel_min: 45
+  # the cap on a trip follows the radius the user asked for
+  radius_min_per_km: 3.0
   # The rulebook's example: "a venue forty minutes away at rush hour may not
   # be worth the trip". Travel time is therefore multiplied by a factor for
   # the hour of the slot. This is a documented proxy, not a live traffic feed.
   rush_factor: 1.30
   normal_factor: 1.00
   night_factor: 0.85
+
+air:
+  # hard limit on the local PM2.5 estimate for a general user
+  pm25_limit_ug_m3: 90
 
 exposure:
   beta: 0.9              # how strongly local exposure inflates PM2.5
