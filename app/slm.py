@@ -104,19 +104,8 @@ CHOICE_SCHEMA: dict[str, Any] = {
     "properties": {
         "slot_id": {"type": "string", "maxLength": 24},
         "headline": {"type": "string", "maxLength": 140},
-        "carry": {
-            "type": "array",
-            "items": {"type": "string", "maxLength": 70},
-            "maxItems": 4,
-        },
-        "watch_for": {
-            "type": "array",
-            "items": {"type": "string", "maxLength": 80},
-            "maxItems": 4,
-        },
-        "avoid_note": {"type": "string", "maxLength": 120},
     },
-    "required": ["slot_id", "headline", "carry", "watch_for", "avoid_note"],
+    "required": ["slot_id", "headline"],
 }
 
 PARSER_SYSTEM = """You extract intent from an outdoor-activity question.
@@ -132,15 +121,15 @@ Rules:
 Use null or empty when the question does not say. Never invent a place."""
 
 CHOOSER_SYSTEM = """You are the GeoAI Outdoor Assistant.
-Pick one option. Reply with JSON only.
+Pick one option and answer in this exact JSON shape:
+{"slot_id": "<the slot id from the options>", "headline": "<one sentence naming the place and the time>"}
 Rules:
-- slot_id: copy it exactly from the options.
-- headline: one sentence starting with "Go to", naming the place and the time.
-- carry: 2 or 3 THINGS TO TAKE, like a water bottle or a rain jacket. Never a number.
-- watch_for: 2 or 3 THINGS TO WATCH OUT FOR, like strong wind or poor air. Never a number.
-- avoid_note: one short sentence or empty.
+- slot_id must be copied exactly from the options.
+- headline is one short sentence that names the place and the time, for example "Go to the park around 09:00 on Thu 22 Oct".
+- do not describe the weather and do not mention an evidence id. Those come from the data.
+
 Example:
-{"slot_id": "S1-102317", "headline": "Go to ABC Farms around 17:00 on Fri 23 Oct, the evening is dry but the air is poor.", "carry": ["Water bottle", "Light layer"], "watch_for": ["Poor air quality", "Strong wind"], "avoid_note": "Avoid the afternoon, a storm is forecast."}"""
+{"slot_id": "S1-102317", "headline": "Go to ABC Farms around 17:00 on Fri 23 Oct."}"""
 
 
 def _split_chatml(prompt: str) -> tuple[str, str]:
@@ -371,7 +360,7 @@ class SLM:
         # The prompt is kept small on purpose: every token costs time on a
         # CPU, and the facts the model needs are all in the table.
         user = f"Options:\n{table}\n\nQuestion: {question[:200]}"
-        return self._complete_json(CHOOSER_SYSTEM, user, CHOICE_SCHEMA, max_tokens=190)
+        return self._complete_json(CHOOSER_SYSTEM, user, CHOICE_SCHEMA, max_tokens=110)
 
 
 slm = SLM()

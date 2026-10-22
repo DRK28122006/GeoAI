@@ -703,11 +703,7 @@ class Pipeline:
         if not choice:
             return Verifier().verify("", facts)
         headline = str(choice.get("headline") or "")
-        advice = " ".join(
-            [str(c) for c in (choice.get("carry") or [])]
-            + [str(w) for w in (choice.get("watch_for") or [])]
-            + [str(choice.get("avoid_note") or "")]
-        )
+        advice = str(choice.get("avoid_note") or "")
         strict = self.verifier.verify(headline, facts, strict_places=True)
         loose = self.verifier.verify(advice, facts, strict_places=False)
         strict.violations.extend(loose.violations)
@@ -735,16 +731,15 @@ class Pipeline:
                 f"{chosen.when.strftime('%a %d %b')}."
             )
         parts = [headline.strip()]
-        # The reasons come from the engine, so each one carries the value we
-        # fetched and the source it came from.
+        # The engine's reasons carry the value we fetched and its source.
         for reason in self._template_why(chosen):
             parts.append(f"- {reason}")
-        carry = (choice or {}).get("carry") or []
+        carry = self._template_carry(chosen, bundle)
         if carry:
-            parts.append("Carry: " + ", ".join(str(c) for c in carry[:4]) + ".")
-        watch = (choice or {}).get("watch_for") or []
+            parts.append("Carry: " + ", ".join(carry[:5]) + ".")
+        watch = self._template_watch(chosen, bundle)
         if watch:
-            parts.append("Watch out for: " + ", ".join(str(w) for w in watch[:4]) + ".")
+            parts.append("Watch out for: " + ", ".join(watch[:5]) + ".")
         if len(top_slots) > 1:
             alts = ", ".join(f"{s.place} at {s.when.strftime('%H:%M')}" for s in top_slots[1:3])
             parts.append(f"Alternatives: {alts}.")
@@ -788,26 +783,43 @@ class Pipeline:
         return reasons
 
     def _template_carry(self, slot, bundle) -> list[str]:
-        items = ["Water bottle", "Light layer for the weather"]
+        """What to take, worked out from the conditions we fetched."""
         w = slot.weather
-        if (w.get("uv_index") or 0) >= 6:
-            items.append("Sunscreen and a cap (UV is high)")
+        temp = w.get("apparent_temp_c")
+        items = ["Water bottle"]
+        if (w.get("uv_index") or 0) >= 6 or (temp is not None and temp >= 30):
+            items.append("Sunscreen and a hat")
         if (w.get("precip_prob") or 0) >= 30:
             items.append("Rain jacket")
-        for p in bundle["intent"].profile:
-            if p == "asthma":
-                items.append("Inhaler")
+        if temp is not None and temp < 18:
+            items.append("A warm layer")
+        elif temp is not None and temp < 26:
+            items.append("A light layer")
+        for profile in bundle["intent"].profile:
+            if profile == "asthma":
+                items.append("Your inhaler")
+            elif profile == "child":
+                items.append("Water and a snack for them")
         return items
 
     def _template_watch(self, slot, bundle) -> list[str]:
+        """What to watch out for, worked out from the conditions we fetched."""
         items = []
         w, a = slot.weather, slot.air
+        precip = w.get("precip_prob") or 0
+        temp = w.get("apparent_temp_c")
+        if precip >= 50:
+            items.append(f"Heavy rain ({precip:.0f}% chance)")
+        elif precip >= 25:
+            items.append(f"Showers possible ({precip:.0f}% chance)")
         if (w.get("wind_kmh") or 0) > 20:
             items.append(f"Strong wind ({w['wind_kmh']:.0f} km/h from {w.get('wind_from')})")
         if (a.get("local_pm2_5") or 0) > 40:
             items.append(f"Elevated local PM2.5 ({a['local_pm2_5']:.0f} ug/m3)")
-        if w.get("apparent_temp_c") and w["apparent_temp_c"] >= 30:
-            items.append("Heat: plan shade and hydration")
+        if temp is not None and temp >= 33:
+            items.append(f"Heat ({temp:.0f}C): plan shade and hydration")
+        if (w.get("uv_index") or 0) >= 8:
+            items.append(f"Very high UV ({w['uv_index']:.0f})")
         if not w.get("is_day"):
             items.append("It gets dark during this slot - bring a light")
         if bundle["intent"].profile:
