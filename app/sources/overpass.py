@@ -188,6 +188,9 @@ class OverpassSource(BaseSource):
                     continue
                 seen.add(key)
 
+                # A private pitch is not somewhere we can send a person.
+                if str(tags.get("access", "")).lower() in {"private", "no"}:
+                    continue
                 kind = self_src._classify(tags)
                 name = tags.get("name") or tags.get("operator") or None
                 if not name:
@@ -215,7 +218,10 @@ class OverpassSource(BaseSource):
                 has_sport = 1 if v.tags.get("sport") else 0
                 notable = 1 if (v.tags.get("wikidata") or v.tags.get("wikipedia")) else 0
                 readable = 1 if len(v.name) > 8 and " " in v.name else 0
-                return (-named, -notable, -readable, -has_sport, v.name)
+                # A park we know the type of beats a feature we could not
+                # classify, even when the second one is named.
+                known = 0 if v.kind in {"other", "unclassified"} else 1
+                return (-named, -known, -notable, -readable, -has_sport, v.name)
 
             venues.sort(key=rank)
             return venues[: act.get("shortlist", 12)]
