@@ -528,7 +528,6 @@ class Pipeline:
 
         # ------------------------------------------------------- choose
         choice: dict[str, Any] | None = None
-        model_text: str | None = None
         t0 = time.perf_counter()
         try:
             choice = await self._run_blocking(
