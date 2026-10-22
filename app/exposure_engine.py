@@ -112,6 +112,7 @@ class ExposureEngine:
 
     # ------------------------------------------------------------- utilities
     def _activity(self, activity: str) -> dict[str, Any]:
+        """The configuration block of one activity."""
         return self.activities.get(activity) or self.activities["running"]
 
     def _profile_limits(self, profiles: list[str]) -> dict[str, Any]:

@@ -105,7 +105,9 @@ explanation can cite it.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | POST | `/ask` | the main endpoint - free-form question in, grounded answer out |
-| GET | `/health` | liveness, model status, cache size |
+| GET | `/live` | liveness - always 200 while the process is up. The container health check uses this |
+| GET | `/ready` | readiness - 503 when the model is not loaded. A load balancer wants this |
+| GET | `/health` | both of the above, for convenience |
 | GET | `/context` | debug: the evidence bundle and top slots without the SLM in the loop |
 | GET | `/sources` | every data source, its role and the attributions |
 

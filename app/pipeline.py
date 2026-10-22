@@ -701,8 +701,10 @@ class Pipeline:
     def _parsed_block(self, intent, bundle, parse_source: str) -> dict[str, Any]:
         origin = bundle.get("origin")
         window = bundle.get("window")
+        activity_cfg = self.engine._activity(intent.activity)
         return {
             "activity": intent.activity,
+            "activity_label": activity_cfg.get("label", intent.activity),
             "location": origin.short_name if origin else intent.location_text,
             "radius_km": intent.radius_km,
             "intent_type": intent.intent_type,
@@ -959,9 +961,15 @@ class Pipeline:
                 items.append("Water and a snack for them")
         return items
 
+    def _activity_warnings(self, bundle: dict[str, Any]) -> list[str]:
+        """What the activity itself is sensitive to, from the config."""
+        activity = bundle.get("intent").activity
+        cfg = self.engine._activity(activity)
+        return list(cfg.get("avoid", []))
+
     def _template_watch(self, slot, bundle) -> list[str]:
         """What to watch out for, worked out from the conditions we fetched."""
-        items = []
+        items = list(self._activity_warnings(bundle))
         w, a = slot.weather, slot.air
         precip = w.get("precip_prob") or 0
         temp = w.get("apparent_temp_c")

@@ -81,15 +81,23 @@ EXPOSE 7860
 
 # /health answers 503 when the model is not loaded, so this fails correctly
 # when the service is up but the assistant is not.
+# Liveness, not readiness: the container stays healthy even without the
+# model, because the assistant can still answer with the rules and the
+# templates. Readiness is at /ready.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:7860/health || exit 1
+    CMD curl -fsS http://127.0.0.1:7860/live || exit 1
 
 # One worker: the model runs in-process and is guarded by a lock, so more
 # workers would only multiply the memory and serialise the model anyway.
 # uvicorn handles SIGTERM and waits for the in-flight requests.
+# One worker: the model runs in-process and is guarded by a lock, so more
+# workers would only multiply the memory and serialise the model anyway.
+# uvicorn handles SIGTERM, waits for the in-flight requests and then runs
+# the shutdown, where the model is released.
 CMD ["uvicorn", "app.main:app", \
      "--host", "0.0.0.0", \
      "--port", "7860", \
      "--workers", "1", \
      "--timeout-keep-alive", "75", \
+     "--timeout-graceful-shutdown", "45", \
      "--log-level", "info"]

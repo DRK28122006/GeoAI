@@ -73,9 +73,3 @@ profiles:
       - "Carry water and take frequent breaks."
       - "Avoid heat, crowds and long walks on hot afternoons."
 
-# Free-text the user might use -> canonical profile name
-aliases:
-  asthma: [asthma, asthmatic, mild asthma, breathing, allergy, allergic, copd, bronchitis]
-  senior: [senior, senior citizen, elderly, old, aged, parents, grandparent, grandfather, grandmother, grandpa, grandma]
-  child: [child, children, kid, kids, kid's, children's, son, daughter, school boy, school girl, toddler]
-  pregnancy: [pregnancy, pregnant, expectant, expecting, prenatal, antenatal]

@@ -22,6 +22,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from app.config import settings
+from app.exposure_engine import haversine_km
 from app.sources.base import BaseSource, SourceResult
 
 logger = logging.getLogger("geoai.geocode")
@@ -84,17 +85,6 @@ COUNTRIES = {
 def _mentions_country(query: str) -> bool:
     q = (query or "").lower()
     return any(c in q for c in COUNTRIES)
-
-
-def _distance_km(a: tuple[float, float], b: tuple[float, float]) -> float:
-    lat1, lon1 = a
-    lat2, lon2 = b
-    r = 6371.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp = p2 - p1
-    dl = math.radians(lon2 - lon1)
-    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(h))
 
 
 class GeocodeCandidate(BaseModel):
@@ -359,7 +349,7 @@ class GeocodeSource(BaseSource):
                             vlon = float(item["lon"])
                         except (KeyError, TypeError, ValueError):
                             continue
-                        if _distance_km((vlat, vlon), (lat, lon)) > radius_km:
+                        if haversine_km((vlat, vlon), (lat, lon)) > radius_km:
                             continue
                         kind = (item.get("type") or item.get("category") or "").lower()
                         if accept and kind and kind not in accept:

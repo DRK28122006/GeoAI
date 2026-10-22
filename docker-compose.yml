@@ -12,7 +12,8 @@ services:
       # Everything has a working default; override only what you need.
       LOG_LEVEL: INFO
       SLM_N_THREADS: "4"
-      MAX_IN_FLIGHT: "4"
+      MAX_IN_FLIGHT: "2"
+      REQUEST_DEADLINE_S: "90"
       # Optional. Without it the air quality comes from the forecast grid and
       # the answer says so.
       WAQI_TOKEN: "${WAQI_TOKEN:-}"
@@ -21,8 +22,10 @@ services:
       # The response cache survives a restart, so a question that was already
       # answered is instant.
       - geoai-cache:/app/.cache
+    # Long enough for an answer that is in flight to finish.
+    stop_grace_period: 60s
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7860/health"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7860/live"]
       interval: 30s
       timeout: 10s
       start_period: 60s
