@@ -103,7 +103,19 @@ class VerificationResult(BaseModel):
 
 
 class Verifier:
-    def verify(self, text: str, facts: dict[str, Any]) -> VerificationResult:
+    def verify(
+        self,
+        text: str,
+        facts: dict[str, Any],
+        strict_places: bool = True,
+    ) -> VerificationResult:
+        """Check a piece of the model's wording against the fetched data.
+
+        ``strict_places`` is used for the headline, where a capitalised word
+        has to be a place we know. The advice items are ordinary sentences
+        and start with words like "Poor" or "Strong", so they are checked
+        loosely.
+        """
         allowed_numbers: set[float] = facts.get("numbers", set())
         allowed_hours: set[int] = facts.get("hours", set())
         allowed_places: set[str] = facts.get("places", set())
@@ -202,6 +214,8 @@ class Verifier:
                 if words[0] in STOPWORDS:
                     continue
                 if words[0].lower() in {w.lower() for w in allowed_places}:
+                    continue
+                if not strict_places:
                     continue
             violations.append(f"place name not in the fetched venues: {phrase}")
 

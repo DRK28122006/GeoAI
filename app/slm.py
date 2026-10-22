@@ -119,28 +119,29 @@ CHOICE_SCHEMA: dict[str, Any] = {
     "required": ["slot_id", "headline", "carry", "watch_for", "avoid_note"],
 }
 
-PARSER_SYSTEM = """You turn a question about an outdoor activity into structured data.
-
-activity: the outdoor activity the person wants to do.
-location: the place they mention, copied exactly as they wrote it. Empty string if they name no place.
-day: the day they mean, for example today, tomorrow, a weekday name, weekend, or none.
-part_of_day: early_morning, morning, afternoon, evening, night, or none.
-hour: the clock hour they give, otherwise null.
-profile: asthma, senior, child or pregnancy when the person mentions it, otherwise none.
-out_of_scope: true only if the question is not about an outdoor activity, a place or the weather.
+PARSER_SYSTEM = """You extract intent from an outdoor-activity question.
+Rules:
+- activity: running (also for a walk, jog or stroll in a park), cycling, golf, cricket, football, tennis, hiking (only for a trek or trail walk), picnic (park outing), event (party, wedding, fair), photography, other.
+- location: the place they mention, copied exactly as they wrote it. Empty string if they name no place.
+- day: the day they mean, for example today, tomorrow, a weekday name, weekend, or none.
+- part_of_day: early_morning, morning, afternoon, evening, night, or none.
+- hour: the clock hour they give, otherwise null.
+- profile: asthma, senior, child or pregnancy when the person mentions it, otherwise none.
+- out_of_scope: true only if the question is not about an outdoor activity, a place or the weather.
 
 Use null or empty when the question does not say. Never invent a place."""
 
-CHOOSER_SYSTEM = """You are the GeoAI Outdoor Assistant. You are given options that were scored from live weather, air-quality and map data.
+CHOOSER_SYSTEM = """You are the GeoAI Outdoor Assistant.
+Pick one option. Reply with JSON only.
+Rules:
+- slot_id: copy it exactly from the options.
+- headline: one sentence starting with "Go to", naming the place and the time.
+- carry: 2 or 3 THINGS TO TAKE, like a water bottle or a rain jacket. Never a number.
+- watch_for: 2 or 3 THINGS TO WATCH OUT FOR, like strong wind or poor air. Never a number.
+- avoid_note: one short sentence or empty.
+Example:
+{"slot_id": "S1-102317", "headline": "Go to ABC Farms around 17:00 on Fri 23 Oct, the evening is dry but the air is poor.", "carry": ["Water bottle", "Light layer"], "watch_for": ["Poor air quality", "Strong wind"], "avoid_note": "Avoid the afternoon, a storm is forecast."}"""
 
-Pick one slot_id from the options. Then write:
-headline: one sentence naming the place and the time.
-why: two reasons, each starting with the evidence id it relies on, for example "E_AQ: US-AQI 42 is good".
-carry: two or three things to take.
-watch_for: two or three things to watch out for.
-avoid_note: one sentence on when to avoid going, or an empty string.
-
-Be brief. Use only numbers that appear in the options. Do not add facts."""
 
 def _split_chatml(prompt: str) -> tuple[str, str]:
     """Split a ChatML prompt back into the system and the user turn."""

@@ -231,6 +231,23 @@ class Pipeline:
         return None
 
     @staticmethod
+    def _is_out_of_scope(question: str) -> bool:
+        """Questions that are not about an outdoor activity, place or weather.
+
+        The question decides this. A small model will happily try to answer
+        a request to write a poem about the monsoon.
+        """
+        q = question.lower()
+        return bool(
+            re.search(
+                r"\b(poem|essay|write me|translate|recipe|joke|story|song|lyrics|"
+                r"homework|cover letter|linkedin|sql query|regex|news about|"
+                r"who is|what is the capital|meaning of life)\b",
+                q,
+            )
+        )
+
+    @staticmethod
     def _place_in_question(location: str, question: str) -> bool:
         """True when the place is one the user actually wrote."""
         if not location:
@@ -372,7 +389,7 @@ class Pipeline:
             intent.radius_km = self._default_radius(intent.activity)
 
         # ----------------------------------------------------------- gate
-        if parsed.get("out_of_scope"):
+        if parsed.get("out_of_scope") or self._is_out_of_scope(question):
             return self._out_of_scope()
 
         if not intent.location_text and intent.lat is None:
@@ -520,6 +537,10 @@ class Pipeline:
         except Exception as exc:  # noqa: BLE001
             logger.warning("SLM chooser failed: %s", exc)
         stage["slm_choose_ms"] = round((time.perf_counter() - t0) * 1000)
+        if choice:
+            logger.info(
+                "the model chose %s", choice.get("slot_id"),
+            )
 
         chosen = self._match_slot(choice, top_slots) if choice else None
         if chosen is None:
@@ -529,12 +550,9 @@ class Pipeline:
         # Only the model's own wording is checked; the scaffolding we add
         # around it is built from engine data and is grounded by construction.
         facts = self.verifier.build_facts(engine_result, bundle)
-        model_text = self._model_text(choice)
-        verification = (
-            self.verifier.verify(model_text, facts)
-            if model_text
-            else Verifier().verify("", facts)
-        )
+        # The headline is checked strictly (a capitalised word there has to
+        # be a place we know); the advice is checked loosely.
+        verification = self._verify_model_text(choice, facts)
 
         if not verification.verified and choice:
             logger.info("Verifier rejected the answer: %s", verification.violations)
@@ -545,13 +563,11 @@ class Pipeline:
                     options,
                     bundle.get("evidence", {}),
                 )
-                model_text2 = self._model_text(choice2)
-                verification2 = self.verifier.verify(model_text2, facts)
+                verification2 = self._verify_model_text(choice2, facts)
                 if verification2.verified or len(verification2.violations) <= len(
                     verification.violations
                 ):
                     choice = choice2
-                    model_text = model_text2
                     verification = verification2
                     chosen = self._match_slot(choice, top_slots) or chosen
             except Exception as exc:  # noqa: BLE001
@@ -598,7 +614,7 @@ class Pipeline:
                     "score": s.score,
                     "breakdown": s.breakdown,
                 }
-                for s in engine_result.slots[1:4]
+                for s in self._alternatives(chosen, engine_result.slots)
             ],
             "avoid": engine_result.avoid,
             "advice": {
@@ -661,13 +677,43 @@ class Pipeline:
 
     @staticmethod
     def _match_slot(choice: dict[str, Any] | None, slots: list) -> Any:
+        """Find the slot the model chose.
+
+        The slot id is a string the model copies, so a small model can
+        mangle it. If the id does not match, the venue it named in the
+        headline is used instead, rather than throwing the answer away.
+        """
         if not choice:
             return None
         wanted = str(choice.get("slot_id", "")).strip()
         for s in slots:
             if s.slot_id == wanted:
                 return s
+        for s in slots:
+            if wanted and wanted in s.slot_id:
+                return s
+        headline = str(choice.get("headline", "")).lower()
+        for s in slots:
+            if s.place.lower() in headline:
+                return s
         return None
+
+    def _verify_model_text(
+        self, choice: dict[str, Any] | None, facts: dict[str, Any]
+    ):
+        if not choice:
+            return Verifier().verify("", facts)
+        headline = str(choice.get("headline") or "")
+        advice = " ".join(
+            [str(c) for c in (choice.get("carry") or [])]
+            + [str(w) for w in (choice.get("watch_for") or [])]
+            + [str(choice.get("avoid_note") or "")]
+        )
+        strict = self.verifier.verify(headline, facts, strict_places=True)
+        loose = self.verifier.verify(advice, facts, strict_places=False)
+        strict.violations.extend(loose.violations)
+        strict.verified = not strict.violations
+        return strict
 
     @staticmethod
     def _model_text(choice: dict[str, Any] | None) -> str:
@@ -704,6 +750,27 @@ class Pipeline:
             alts = ", ".join(f"{s.place} at {s.when.strftime('%H:%M')}" for s in top_slots[1:3])
             parts.append(f"Alternatives: {alts}.")
         return "\n".join(parts)
+
+    @staticmethod
+    def _alternatives(chosen, slots: list) -> list:
+        """Two other good options, preferring a different time of day.
+
+        Offering the same place at the same hour is not an alternative.
+        """
+        out = []
+        used_hours = {chosen.when.hour}
+        for s in slots:
+            if s.slot_id == chosen.slot_id:
+                continue
+            if s.when.hour in used_hours:
+                continue
+            used_hours.add(s.when.hour)
+            out.append(s)
+            if len(out) == 2:
+                break
+        if not out:
+            out = [s for s in slots if s.slot_id != chosen.slot_id][:2]
+        return out
 
     def _template_why(self, slot) -> list[str]:
         w, a = slot.weather, slot.air
