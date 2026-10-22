@@ -434,11 +434,13 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
             "Travel times by car from the starting point to every shortlisted venue",
         )
     if daylight:
+        sunrises = daylight.get("sunrise") or []
+        sunsets = daylight.get("sunset") or []
         add_evidence(
             "E_DAYLIGHT",
             "Open-Meteo daily" if daylight.get("source") == "open-meteo" else "Astral",
-            f"Sunrise {daylight.get('sunrise', [''])[0]} / sunset "
-            f"{daylight.get('sunset', [''])[0]} (IST)",
+            f"Sunrise {sunrises[0] if sunrises else 'unknown'} / sunset "
+            f"{sunsets[0] if sunsets else 'unknown'} (IST)",
         )
 
     # The air-quality forecast reaches 7 days. Anything beyond that is not
