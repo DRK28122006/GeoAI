@@ -79,12 +79,12 @@ def make_bundle(
         start = when_list[0]
         end = when_list[-1] + timedelta(hours=1)
         label = "test"
-        assumptions: list[str] = []  # noqa: RUF012 - test fixture
+        assumptions: list[str] = []
         hours = when_list
 
     class _Intent:
         activity = "running"
-        profile: list[str] = []  # noqa: RUF012 - test fixture
+        profile: list[str] = []
         radius_km = 5.0
         days_ahead = 1
         raw_text = "test"

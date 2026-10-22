@@ -62,8 +62,8 @@ def _bundle(activity: str = "running", profile: list[str] | None = None):
         end = when + timedelta(hours=1)
         label = "tomorrow morning"
         hours = [when]
-        assumptions: list[str] = []  # noqa: RUF012 - test fixture
-        dates: list[str] = []  # noqa: RUF012 - test fixture
+        assumptions: list[str] = []
+        dates: list[str] = []
 
     class _Intent:
         pass
