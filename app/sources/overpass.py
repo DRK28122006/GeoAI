@@ -21,10 +21,9 @@ import time
 from typing import Any
 
 import httpx
-import yaml
 from pydantic import BaseModel
 
-from app.config import CONFIG_DIR, settings
+from app.config import load_config, settings
 from app.sources.base import BaseSource, SourceResult
 
 logger = logging.getLogger("geoai.overpass")
@@ -38,7 +37,6 @@ class Venue(BaseModel):
     kind: str
     tags: dict[str, Any] = {}
     lit: bool = False
-    area_m2: float | None = None
 
 
 class Hazard(BaseModel):
@@ -49,6 +47,12 @@ class Hazard(BaseModel):
     points: list[tuple[float, float]] = []
 
 
+# The public mirrors serve one query at a time per address. Two parallel
+# requests to the same mirror make one of them queue or time out, so the
+# Overpass path is serialised and the mirror list is the redundancy.
+_OVERPASS_GATE = asyncio.Semaphore(1)
+
+
 class OverpassSource(BaseSource):
     # Shared across requests: when the mirrors start refusing us, we stop
     # asking for a while instead of burning the user's time on every question.
@@ -57,10 +61,8 @@ class OverpassSource(BaseSource):
 
     def __init__(self):
         super().__init__("overpass", rate_limit=1)
-        with open(CONFIG_DIR / "activities.yaml", "r", encoding="utf-8") as f:
-            self.activities: dict[str, Any] = yaml.safe_load(f)
-        with open(CONFIG_DIR / "hazards.yaml", "r", encoding="utf-8") as f:
-            self.hazards_cfg: dict[str, Any] = yaml.safe_load(f)
+        self.activities = load_config("activities")
+        self.hazards_cfg = load_config("hazards")
 
     # ------------------------------------------------------------------ utils
     @staticmethod
@@ -91,9 +93,12 @@ class OverpassSource(BaseSource):
     async def _post_mirror(
         self, url: str, query: str, timeout: float
     ) -> dict | None:
-        """One POST to one mirror. No circuit breaker here: the mirror list
-        is the redundancy, and a shared breaker used to disable every later
-        Overpass call after three failures."""
+        """One POST to one mirror.
+
+        No circuit breaker here: the mirror list is the redundancy, and a
+        shared breaker used to disable every later Overpass call after three
+        failures.
+        """
         headers = {
             "User-Agent": settings.user_agent,
             "Content-Type": "application/x-www-form-urlencoded",
@@ -103,7 +108,8 @@ class OverpassSource(BaseSource):
             async with httpx.AsyncClient(
                 headers=headers, timeout=timeout, follow_redirects=True
             ) as client:
-                resp = await client.post(url, data={"data": query})
+                async with _OVERPASS_GATE:
+                    resp = await client.post(url, data={"data": query})
                 resp.raise_for_status()
                 data = resp.json()
                 return data if isinstance(data, dict) else None
@@ -111,14 +117,26 @@ class OverpassSource(BaseSource):
             logger.warning("Overpass mirror %s failed: %s", url, exc)
             return None
 
-    async def _run(self, query: str, budget: float | None = None) -> dict | None:
-        """POST the query to each mirror until one answers, inside a budget."""
+    async def _run(
+        self,
+        query: str,
+        budget: float | None = None,
+        start: int = 0,
+    ) -> dict | None:
+        """POST the query to each mirror until one answers, inside a budget.
+
+        ``start`` rotates the mirror list, so two queries can run at the same
+        time against two different servers. The public mirrors serve one
+        request at a time per address, so two parallel queries to the same
+        mirror would make one of them wait for the other.
+        """
         if time.monotonic() < OverpassSource._cooldown_until:
             logger.warning("Overpass is in a cooldown, skipping the lookup")
             return None
         budget = budget if budget is not None else settings.OVERPASS_BUDGET_S
         deadline = time.monotonic() + budget
-        for mirror in settings.OVERPASS_MIRRORS:
+        mirrors = settings.OVERPASS_MIRRORS[start:] + settings.OVERPASS_MIRRORS[:start]
+        for mirror in mirrors:
             remaining = deadline - time.monotonic()
             if remaining <= 1:
                 logger.warning("Overpass budget exhausted, stopping mirror loop")
@@ -287,20 +305,12 @@ class OverpassSource(BaseSource):
         # geometry of every nearby feature in one go takes 24 seconds, while
         # the roads with their real shape and the rest with just a centre
         # point take 13 seconds together.
-        road_sel = [
-            sel('way(around:%d,%.5f,%.5f)["highway"~"^(motorway|trunk|primary|secondary)$"]'),
-        ]
-        rest_sel = [
-            sel('nwr(around:%d,%.5f,%.5f)["landuse"="industrial"]'),
-            sel('nwr(around:%d,%.5f,%.5f)["power"="plant"]'),
-            sel('nwr(around:%d,%.5f,%.5f)["man_made"="works"]'),
-            sel('nwr(around:%d,%.5f,%.5f)["landuse"="landfill"]'),
-            sel('nwr(around:%d,%.5f,%.5f)["natural"="water"]'),
-            sel('nwr(around:%d,%.5f,%.5f)["waterway"~"^(river|canal|riverbank|dock)$"]'),
-            sel('nwr(around:%d,%.5f,%.5f)["landuse"~"^(forest|grass|meadow|orchard)$"]'),
-            sel('nwr(around:%d,%.5f,%.5f)["natural"~"^(wood|scrub|grassland)$"]'),
-            sel('nwr(around:%d,%.5f,%.5f)["leisure"~"^(park|garden|nature_reserve)$"]'),
-        ]
+        # The selectors come from the config so they can be changed without
+        # touching the code. The first group keeps its real geometry, the
+        # second only needs a centre point.
+        groups = self.hazards_cfg.get("overpass", {})
+        road_sel = [sel(t) for t in groups.get("roads", [])]
+        rest_sel = [sel(t) for t in groups.get("other", [])]
         # The roads keep their real geometry, so the distance to a busy road
         # is measured to the road and not to the middle of it.
         q_road = (
@@ -313,12 +323,19 @@ class OverpassSource(BaseSource):
         cache_key = f"hazards:{lat:.4f}:{lon:.4f}:{radius_m}"
 
         async def _fetch(self_src: OverpassSource):
-            road_data, rest_data = await asyncio.gather(
-                self_src._run(q_road),
-                self_src._run(q_rest),
-            )
+            # One after the other, not in parallel: the mirror serves one
+            # query at a time, and running them together meant one of them
+            # was dropped and the venues looked cleaner than they are.
+            road_data = await self_src._run(q_road, start=0)
+            rest_data = await self_src._run(q_rest, start=1)
             if road_data is None and rest_data is None:
                 raise RuntimeError("all Overpass mirrors failed")
+            if road_data is None or rest_data is None:
+                # One of the two failed. That is a partial result, and it has
+                # to be said out loud, because a missing group of features
+                # would make the venues look cleaner than they are.
+                missing = "roads" if road_data is None else "water, industry and green cover"
+                logger.warning("the %s around the area were not mapped", missing)
             hazards: list[Hazard] = []
             for data in (road_data, rest_data):
                 if not data:

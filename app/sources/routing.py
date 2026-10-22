@@ -9,13 +9,10 @@ flagged as a limitation in the response.
 from __future__ import annotations
 
 import hashlib
-import logging
 from typing import Any
 
 from app.config import settings
 from app.sources.base import BaseSource, SourceResult
-
-logger = logging.getLogger("geoai.routing")
 
 MAX_DESTINATIONS = 25
 

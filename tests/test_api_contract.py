@@ -145,7 +145,7 @@ def stubbed(monkeypatch):
     async def fake_gather(intent):
         return _bundle(intent.activity, intent.profile)
 
-    def fake_choose(self, question, options, evidence):
+    def fake_choose(self, question, options):
         # A well formed answer that only uses the values from the table.
         top = options[0]
         return {

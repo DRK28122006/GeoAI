@@ -20,6 +20,7 @@ import logging
 import os
 import threading
 import time
+from collections import OrderedDict
 from typing import Any
 
 import httpx
@@ -149,11 +150,16 @@ class SLM:
         self._lock = threading.Lock()
         self._loaded_at: float | None = None
         self._load_error: str | None = None
-        self._http: httpx.Client | None = None
         # Repeated questions (the judging demo) should not pay for inference
         # twice. The cache holds parsed results, never the raw model output.
-        self._cache: dict[tuple, dict[str, Any]] = {}
+        self._cache: OrderedDict[tuple, dict[str, Any]] = OrderedDict()
         self._cache_max = 128
+        # The cache is read and written from the executor threads, so it
+        # needs its own lock. Without it, evicting while another thread
+        # inserts raised "dictionary changed size during iteration" and the
+        # request silently fell back to the rule based parser.
+        self._cache_lock = threading.Lock()
+        self._grammars: dict[str, Any] = {}
 
     # ------------------------------------------------------------- lifecycle
     def load(self) -> bool:
@@ -227,9 +233,15 @@ class SLM:
             return False
 
     def unload(self) -> None:
-        """Release the model so the process can exit cleanly."""
-        with self._lock:
-            self._llm = None
+        """Release the model so the process can exit cleanly.
+
+        The lock is not taken here. If a generation is still running, the
+        thread holding it would block the event loop for the rest of that
+        generation, and the container would be killed instead of stopping.
+        Dropping the reference is enough: the running call keeps the object
+        alive until it finishes.
+        """
+        self._llm = None
         self._loaded_at = None
         logger.info("the model was released")
 
@@ -264,38 +276,56 @@ class SLM:
         self, system: str, user: str, schema: dict[str, Any], max_tokens: int
     ) -> dict[str, Any]:
         key = (system, user, max_tokens, json.dumps(schema, sort_keys=True))
-        cached = self._cache.get(key)
-        if cached is not None:
-            logger.info("SLM cache hit for %s...", user[:60])
-            return cached
+        with self._cache_lock:
+            cached = self._cache.get(key)
+            if cached is not None:
+                self._cache.move_to_end(key)
+                logger.info("SLM cache hit")
+                return cached
         prompt = self._chatml(system, user)
         if self.backend == "server":
             result = self._complete_json_server(prompt, schema, max_tokens)
         else:
             result = self._complete_json_inprocess(prompt, schema, max_tokens)
-        if len(self._cache) > self._cache_max:
-            self._cache.pop(next(iter(self._cache)))
-        self._cache[key] = result
+        with self._cache_lock:
+            self._cache[key] = result
+            self._cache.move_to_end(key)
+            while len(self._cache) > self._cache_max:
+                self._cache.popitem(last=False)
         return result
+
+    def _grammar(self, schema: dict[str, Any]):
+        """Compile the schema into a grammar, and keep it for next time."""
+        from llama_cpp import LlamaGrammar
+
+        key = json.dumps(schema, sort_keys=True)
+        with self._cache_lock:
+            grammar = self._grammars.get(key)
+            if grammar is None:
+                grammar = LlamaGrammar.from_json_schema(key)
+                self._grammars[key] = grammar
+            return grammar
 
     def _complete_json_inprocess(
         self, prompt: str, schema: dict[str, Any], max_tokens: int
     ) -> dict[str, Any]:
         if self._llm is None:
             raise SLMUnavailable(self._load_error or "model not loaded")
-        from llama_cpp import LlamaGrammar
 
-        grammar = LlamaGrammar.from_json_schema(json.dumps(schema))
+        grammar = self._grammar(schema)
         started = time.perf_counter()
-        with self._lock:
+        if not self._lock.acquire(timeout=settings.MODEL_WAIT_S):
+            raise SLMUnavailable("the model is busy")
+        try:
             out = self._llm.create_completion(
                 prompt=prompt,
                 grammar=grammar,
                 max_tokens=max_tokens,
                 temperature=0.1,
                 top_p=0.9,
-                stop=["<|im_end|>"],
             )
+        finally:
+            self._lock.release()
         usage = out.get("usage", {})
         elapsed = time.perf_counter() - started
         completion = usage.get("completion_tokens", 0)
@@ -345,13 +375,9 @@ class SLM:
     # ------------------------------------------------------------------ API
     def parse_intent(self, question: str, now_iso: str) -> dict[str, Any]:
         user = f"Today is {now_iso} (IST). Question: {question}"
-        data = self._complete_json(PARSER_SYSTEM, user, INTENT_SCHEMA, max_tokens=160)
-        data["_raw_question"] = question
-        return data
+        return self._complete_json(PARSER_SYSTEM, user, INTENT_SCHEMA, max_tokens=160)
 
-    def choose(
-        self, question: str, options: list[dict[str, Any]], evidence: dict[str, Any]
-    ) -> dict[str, Any]:
+    def choose(self, question: str, options: list[dict[str, Any]]) -> dict[str, Any]:
         def number(value, digits=0):
             if value is None:
                 return "?"

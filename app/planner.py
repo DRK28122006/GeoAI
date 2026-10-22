@@ -15,7 +15,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-TZ = ZoneInfo("Asia/Kolkata")
+from app.config import settings
+
+TZ = ZoneInfo(settings.TIMEZONE)
 
 # name -> (first_hour, last_hour) inclusive
 PART_OF_DAY: dict[str, tuple[int, int]] = {
@@ -47,11 +49,6 @@ class TimeWindow:
     hours: list[datetime] = field(default_factory=list)
     label: str = ""
     assumptions: list[str] = field(default_factory=list)
-
-    @property
-    def dates(self) -> list[str]:
-        return sorted({h.date().isoformat() for h in self.hours})
-
 
 def now_ist() -> datetime:
     return datetime.now(TZ)
@@ -140,10 +137,8 @@ def _weekend_days(base: datetime) -> list[datetime]:
 
 
 def resolve(
-    time_text: str = "",
     day: str | None = None,
     part_of_day: str | None = None,
-    hour: int | None = None,
     days_ahead: int = 1,
     now: datetime | None = None,
     raw_text: str = "",

@@ -102,7 +102,6 @@ class GeocodeCandidate(BaseModel):
     short_name: str
     lat: float
     lon: float
-    confidence: float
     source: str
     kind: str = "unknown"
     importance: float = 0.0
@@ -263,7 +262,6 @@ class GeocodeSource(BaseSource):
                             short_name=short or variant,
                             lat=float(item["lat"]),
                             lon=float(item["lon"]),
-                            confidence=1.0,
                             source="nominatim",
                             kind=item.get("type") or item.get("category") or "unknown",
                             importance=float(item.get("importance") or 0.0),
@@ -298,7 +296,6 @@ class GeocodeSource(BaseSource):
                         short_name=item.get("name", query),
                         lat=float(item["latitude"]),
                         lon=float(item["longitude"]),
-                        confidence=0.6,
                         source="open-meteo",
                         kind="place",
                         importance=0.5,

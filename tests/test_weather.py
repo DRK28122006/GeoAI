@@ -29,7 +29,7 @@ async def test_weather_returns_one_payload_per_coordinate():
             return_value=Response(200, json=[mock, mock])
         )
 
-        result = await source.get_forecast([19.1, 19.2], [72.9, 73.0], 24)
+        result = await source.get_forecast([19.1, 19.2], [72.9, 73.0], 3)
 
     assert result.ok is True
     # Open-Meteo returns one object per coordinate, and the engine relies on
@@ -49,7 +49,7 @@ async def test_weather_single_coordinate_is_wrapped_in_a_list():
             return_value=Response(200, json=mock)
         )
 
-        result = await source.get_forecast([19.1], [72.9], 24)
+        result = await source.get_forecast([19.1], [72.9], 3)
 
     assert result.ok is True
     assert isinstance(result.data, list)
@@ -65,7 +65,7 @@ async def test_weather_failure_is_reported_not_raised():
             return_value=Response(500)
         )
 
-        result = await source.get_forecast([19.1], [72.9], 24)
+        result = await source.get_forecast([19.1], [72.9], 3)
 
     assert result.ok is False
     assert result.error is not None

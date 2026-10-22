@@ -16,7 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.config import settings
+from app.config import load_config, settings
 from app.exposure_engine import haversine_km
 from app.planner import TimeWindow, now_ist, resolve
 from app.sources.airquality import AQSource
@@ -31,14 +31,20 @@ logger = logging.getLogger("geoai.context")
 
 
 def _activity_config(activity: str) -> dict:
-    """Read one activity block from the activity config."""
-    import yaml
-
-    from app.config import CONFIG_DIR
-
-    with open(CONFIG_DIR / "activities.yaml", "r", encoding="utf-8") as f:
-        acts = yaml.safe_load(f)
+    """One activity block from the activity config."""
+    acts = load_config("activities")
     return acts.get(activity) or acts.get("running") or {}
+
+
+class _OriginFromCoordinates:
+    """The starting point the user gave, instead of a geocoded place."""
+
+    def __init__(self, lat: float, lon: float, label: str = "") -> None:
+        self.lat = lat
+        self.lon = lon
+        self.short_name = label or f"{lat:.5f}, {lon:.5f}"
+        self.display_name = self.short_name
+        self.country_code = ""
 
 
 class Intent(BaseModel):
@@ -48,10 +54,8 @@ class Intent(BaseModel):
     lon: float | None = None
     radius_km: float = 5.0
     profile: list[str] = Field(default_factory=list)
-    time_text: str = ""
     day: str | None = None
     part_of_day: str | None = None
-    hour: int | None = None
     days_ahead: int = 1
     intent_type: str = "recommend"
     missing: list[str] = Field(default_factory=list)
@@ -76,10 +80,8 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
     # The time window is resolved first: it decides how many days of forecast
     # we have to fetch. "this weekend" needs four days, "tomorrow" needs two.
     window: TimeWindow = resolve(
-        time_text=intent.time_text,
         day=intent.day,
         part_of_day=intent.part_of_day,
-        hour=intent.hour,
         days_ahead=intent.days_ahead,
         now=now_ist(),
         raw_text=intent.raw_text,
@@ -106,10 +108,28 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
 
     # ------------------------------------------------------------- geocode
     t0 = time.perf_counter()
-    geo_res = await geo.geocode(intent.location_text)
+    if intent.lat is not None and intent.lon is not None:
+        # The user gave a starting point, so the geocoder is not needed.
+        origin = _OriginFromCoordinates(intent.lat, intent.lon, intent.location_text)
+        geo_res = None
+        status["geocode"] = True
+        add_evidence(
+            "E_GEO",
+            "the coordinates in the request",
+            f"Starting point {origin.lat:.5f}, {origin.lon:.5f}",
+        )
+    else:
+        geo_res = await asyncio.wait_for(
+            geo.geocode(intent.location_text), timeout=settings.GEOCODE_DEADLINE_S
+        )
+        status["geocode"] = geo_res.ok
     timings["geocode_ms"] = round((time.perf_counter() - t0) * 1000)
-    status["geocode"] = geo_res.ok
-    if not geo_res.ok or not geo_res.data:
+
+    candidates: list = []
+    if geo_res is None:
+        # the coordinates in the request are the starting point
+        pass
+    elif not geo_res.ok or not geo_res.data:
         unavailable = bool(geo_res.error) and (
             "breaker" in str(geo_res.error).lower()
             or "timeout" in str(geo_res.error).lower()
@@ -129,16 +149,17 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
             "source_status": status,
             "limitations": [f"Geocoding failed: {geo_res.error}"],
         }
-
-    candidates = geo_res.data
-    origin = candidates[0]
-    intent.lat, intent.lon = origin.lat, origin.lon
-    add_evidence(
-        "E_GEO",
-        "Nominatim" if origin.source == "nominatim" else origin.source.title(),
-        f"Location resolved to {origin.short_name} ({origin.lat:.5f}, {origin.lon:.5f})",
-        geo_res.fetched_at,
-    )
+    else:
+        candidates = geo_res.data
+        origin = candidates[0]
+        intent.lat, intent.lon = origin.lat, origin.lon
+        add_evidence(
+            "E_GEO",
+            "Nominatim" if origin.source == "nominatim" else origin.source.title(),
+            f"Location resolved to {origin.short_name} "
+            f"({origin.lat:.5f}, {origin.lon:.5f})",
+            geo_res.fetched_at,
+        )
     if len(candidates) > 1:
         # A place in another country is noise, not a useful alternative, so
         # only the matches from the same country are listed.
@@ -195,19 +216,32 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
     t0 = time.perf_counter()
     # Two independent venue sources run together and are merged: Overpass has
     # the best tag coverage but is often slow, Nominatim answers in ~1s.
-    venue_res, nom_venue_res = await asyncio.gather(
-        overpass.get_venues(
+    try:
+        venue_res, nom_venue_res = await asyncio.wait_for(
+            asyncio.gather(
+                overpass.get_venues(
+                    intent.activity, origin.lat, origin.lon, intent.radius_km
+                ),
+                geo.search_venues(
+                    nom_terms,
+                    place_label,
+                    origin.lat,
+                    origin.lon,
+                    intent.radius_km,
+                    accept_types=nom_types,
+                ),
+            ),
+            timeout=settings.VENUE_DEADLINE_S,
+        )
+    except TimeoutError:
+        limitations.append(
+            "The venue lookup was too slow, so the answer uses the venues that "
+            "were already known for the area."
+        )
+        venue_res = await overpass.get_venues(
             intent.activity, origin.lat, origin.lon, intent.radius_km
-        ),
-        geo.search_venues(
-            nom_terms,
-            place_label,
-            origin.lat,
-            origin.lon,
-            intent.radius_km,
-            accept_types=nom_types,
-        ),
-    )
+        )
+        nom_venue_res = None
     timings["venues_ms"] = round((time.perf_counter() - t0) * 1000)
     status["overpass_venues"] = venue_res.ok
     venues = venue_res.data or []

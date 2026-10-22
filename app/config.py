@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # The configs are shipped inside the package so an installed copy works, and
@@ -26,6 +26,8 @@ if not CONFIG_DIR.is_dir():
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     # --- API keys (optional; the assistant degrades gracefully without them) ---
     # WAQI gives us a real monitoring station reading, which corrects the
     # coarse air-quality grid. It is the only key the app reads.
@@ -42,7 +44,20 @@ class Settings(BaseSettings):
     CACHE_DIR: str = os.getenv("CACHE_DIR", str(REPO_ROOT / ".cache"))
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     TIMEZONE: str = os.getenv("TIMEZONE", "Asia/Kolkata")
-    MAX_WORKERS: int = int(os.getenv("MAX_WORKERS", "1"))
+    # The whole request has to finish. Past this the caller is told the
+    # service is busy, which is better than a client timeout with no answer.
+    REQUEST_DEADLINE_S: float = float(os.getenv("REQUEST_DEADLINE_S", "90"))
+    # The geocoding and the venue lookup are the two slow stages.
+    GEOCODE_DEADLINE_S: float = float(os.getenv("GEOCODE_DEADLINE_S", "20"))
+    VENUE_DEADLINE_S: float = float(os.getenv("VENUE_DEADLINE_S", "25"))
+    # How long a request may wait for the model before the answer is
+    # produced without it.
+    MODEL_WAIT_S: float = float(os.getenv("MODEL_WAIT_S", "60"))
+    PORT: int = int(os.getenv("PORT", "7860"))
+    # The model is the bottleneck, so only a couple of requests may be in
+    # flight at once. More than that and the queue is longer than the
+    # client's patience.
+    MAX_IN_FLIGHT: int = int(os.getenv("MAX_IN_FLIGHT", "2"))
 
     # --- SLM ---
     SLM_MODEL_PATH: str = os.getenv(
@@ -52,7 +67,6 @@ class Settings(BaseSettings):
     SLM_N_CTX: int = int(os.getenv("SLM_N_CTX", "4096"))
     SLM_N_THREADS: int = int(os.getenv("SLM_N_THREADS", "4"))
     SLM_N_BATCH: int = int(os.getenv("SLM_N_BATCH", "256"))
-    SLM_MAX_TOKENS: int = int(os.getenv("SLM_MAX_TOKENS", "220"))
     # Load the model at process start instead of on the first request.
     SLM_EAGER_LOAD: bool = os.getenv("SLM_EAGER_LOAD", "true").lower() in {
         "1",
@@ -84,7 +98,6 @@ class Settings(BaseSettings):
     TTL_VENUES: int = 24 * 3600
     TTL_WEATHER_FORECAST: int = 30 * 60
     TTL_AQ_FORECAST: int = 30 * 60
-    TTL_STATION_OBS: int = 15 * 60
     TTL_ROUTING: int = 15 * 60
     TTL_DAYLIGHT: int = 6 * 3600
     TTL_ELEVATION: int = 30 * 24 * 3600
@@ -121,3 +134,19 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# The activity and profile configuration is read by the engine, the sources and
+# the pipeline. It is loaded once and cached, so a request does not re-read
+# four YAML files.
+_CONFIG_CACHE: dict[str, dict] = {}
+
+
+def load_config(name: str) -> dict:
+    """Read one of the YAML files in app/configs, once."""
+    if name not in _CONFIG_CACHE:
+        import yaml
+
+        path = CONFIG_DIR / f"{name}.yaml"
+        with open(path, "r", encoding="utf-8") as handle:
+            _CONFIG_CACHE[name] = yaml.safe_load(handle) or {}
+    return _CONFIG_CACHE[name]

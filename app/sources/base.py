@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Generic, TypeVar
@@ -24,10 +25,6 @@ T = TypeVar("T")
 
 logging.basicConfig(level=settings.LOG_LEVEL)
 logger = logging.getLogger("geoai.sources")
-
-
-class SourceUnavailable(RuntimeError):
-    """The source could not be reached, as opposed to having no answer."""
 
 
 class SourceResult(BaseModel, Generic[T]):
@@ -71,12 +68,34 @@ class CircuitBreaker:
         self.failures = 0
 
 
+def redact(message: str) -> str:
+    """Take the secrets out of an error message.
+
+    The air quality token travels in the query string, so an httpx error
+    embeds the whole URL. Without this the token ends up in the logs and in
+    the response body.
+    """
+    text = str(message)
+    for secret in (settings.WAQI_TOKEN,):
+        if secret and len(secret) > 6:
+            text = text.replace(secret, "***")
+    # and anything that still looks like a token parameter
+    text = re.sub(
+        r"((?:token|api_key|apikey)=)[^&\s'\"]+", r"\1***", text, flags=re.IGNORECASE
+    )
+    return text
+
+
 GLOBAL_LIMITERS: dict[str, asyncio.Semaphore] = {}
 GLOBAL_BREAKERS: dict[str, CircuitBreaker] = {}
 # Minimum seconds between two calls to the same source. Nominatim asks for no
 # more than one request a second and starts answering 429 when it is pushed.
 GLOBAL_MIN_INTERVAL: dict[str, float] = {}
 GLOBAL_NEXT_CALL: dict[str, float] = {}
+# One lock per source, so the pacing and the request are atomic. Without it
+# two coroutines could both see a free slot and call Nominatim at the same
+# time, which is how it starts answering 429.
+GLOBAL_PACE_LOCKS: dict[str, asyncio.Lock] = {}
 app_cache = Cache(settings.CACHE_DIR)
 
 FAILURE_CACHE_TTL = 60
@@ -103,13 +122,16 @@ class BaseSource:
         interval = GLOBAL_MIN_INTERVAL.get(self.name, 0.0)
         if not interval:
             return
+        lock = GLOBAL_PACE_LOCKS.setdefault(self.name, asyncio.Lock())
         loop = asyncio.get_running_loop()
-        while True:
-            wait = GLOBAL_NEXT_CALL.get(self.name, 0.0) - loop.time()
-            if wait <= 0:
-                break
-            await asyncio.sleep(wait)
-        GLOBAL_NEXT_CALL[self.name] = loop.time() + interval
+        async with lock:
+            while True:
+                wait = GLOBAL_NEXT_CALL.get(self.name, 0.0) - loop.time()
+                if wait <= 0:
+                    break
+                await asyncio.sleep(wait)
+            # reserved before the request, so the next caller waits for it
+            GLOBAL_NEXT_CALL[self.name] = loop.time() + interval
 
     @property
     def headers(self) -> dict[str, str]:
@@ -184,7 +206,7 @@ class BaseSource:
                         retries,
                         self.name,
                         wait,
-                        exc,
+                        redact(exc),
                     )
                     await asyncio.sleep(wait)
             breaker.record_failure()
@@ -227,17 +249,19 @@ class BaseSource:
             data = await fetch_fn(self)
         except Exception as exc:  # noqa: BLE001 - a source failure must never crash the request
             latency = (time.perf_counter() - start) * 1000
-            logger.error("Source %s failed: %s", self.name, exc)
+            logger.error("Source %s failed: %s", self.name, redact(exc))
             # Cache the failure briefly so a dead upstream is not retried on
             # every single request, but the caller still gets a clean error.
             app_cache.set(
-                f"fail:{settings.CACHE_VERSION}:{cache_key}", str(exc), expire=FAILURE_CACHE_TTL
+                f"fail:{settings.CACHE_VERSION}:{cache_key}",
+                redact(exc),
+                expire=FAILURE_CACHE_TTL,
             )
             return SourceResult(
                 source=self.name,
                 ok=False,
                 params=params,
-                error=str(exc),
+                error=redact(exc),
                 cached=False,
                 latency_ms=latency,
             )

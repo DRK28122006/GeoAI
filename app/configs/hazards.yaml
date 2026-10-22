@@ -5,17 +5,24 @@
 # contributes to local pollution exposure and how quickly that effect decays
 # with distance.
 
+# The map features we look for around the user, in two groups.
+# The roads keep their real geometry, because the distance to a busy road has
+# to be measured to the road and not to the middle of it. The rest only need
+# a centre point. The %d is the radius in metres and the two %.5f are the
+# latitude and the longitude.
 overpass:
-  - '["highway"~"^(motorway|trunk|primary|secondary)$"]'
-  - '["landuse"="industrial"]'
-  - '["power"="plant"]'
-  - '["man_made"="works"]'
-  - '["landuse"="landfill"]'
-  - '["natural"="water"]'
-  - '["waterway"~"^(river|canal|riverbank|dock)$"]'
-  - '["landuse"~"^(forest|grass|meadow)$"]'
-  - '["natural"~"^(wood|scrub|grassland)$"]'
-  - '["leisure"~"^(park|garden|nature_reserve)$"]'
+  roads:
+    - 'way(around:%d,%.5f,%.5f)["highway"~"^(motorway|trunk|primary|secondary)$"]'
+  other:
+    - 'nwr(around:%d,%.5f,%.5f)["landuse"="industrial"]'
+    - 'nwr(around:%d,%.5f,%.5f)["power"="plant"]'
+    - 'nwr(around:%d,%.5f,%.5f)["man_made"="works"]'
+    - 'nwr(around:%d,%.5f,%.5f)["landuse"="landfill"]'
+    - 'nwr(around:%d,%.5f,%.5f)["natural"="water"]'
+    - 'nwr(around:%d,%.5f,%.5f)["waterway"~"^(river|canal|riverbank|dock)$"]'
+    - 'nwr(around:%d,%.5f,%.5f)["landuse"~"^(forest|grass|meadow|orchard)$"]'
+    - 'nwr(around:%d,%.5f,%.5f)["natural"~"^(wood|scrub|grassland)$"]'
+    - 'nwr(around:%d,%.5f,%.5f)["leisure"~"^(park|garden|nature_reserve)$"]'
 
 # class -> contribution weight, spatial decay length (m), rush-hour traffic factor
 classes:

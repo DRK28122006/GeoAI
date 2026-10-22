@@ -20,7 +20,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.config import settings
-from app.sources.base import BaseSource, SourceResult
+from app.sources.base import BaseSource, SourceResult, redact
 
 logger = logging.getLogger("geoai.airquality")
 
@@ -66,9 +66,11 @@ class AQSource(BaseSource):
                     bias = await self_src._waqi_bias(lats[0], lons[0], forecasts[0])
                     payload.update(bias)
                 except Exception as exc:  # noqa: BLE001 - degrade, never crash
-                    logger.warning("WAQI bias correction failed: %s", exc)
+                    safe = redact(exc)
+                    logger.warning("WAQI bias correction failed: %s", safe)
                     payload["station_limitations"].append(
-                        f"Station bias correction unavailable ({exc})."
+                        "The nearby air quality station could not be reached, so the "
+                        "forecast grid is used as it is."
                     )
             else:
                 payload["station_limitations"].append(

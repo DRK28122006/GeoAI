@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -52,6 +51,10 @@ async def lifespan(app: FastAPI):
         # Free the model before the process exits so the container stops
         # cleanly instead of being killed with the weights still mapped.
         slm.unload()
+        try:
+            app_cache.close()
+        except Exception as exc:  # noqa: BLE001 - never block the shutdown
+            logger.warning("the cache did not close cleanly: %s", exc)
         logger.info("Model released, shutting down")
 
 
@@ -104,34 +107,52 @@ class AskRequest(BaseModel):
 
     question: str | None = Field(default=None, min_length=2, max_length=2000)
     query: str | None = Field(default=None, min_length=2, max_length=2000)
-    lat: float | None = None
-    lon: float | None = None
+    # An optional starting point. When it is given the geocoder is skipped.
+    lat: float | None = Field(default=None, ge=-90, le=90, allow_inf_nan=False)
+    lon: float | None = Field(default=None, ge=-180, le=180, allow_inf_nan=False)
     debug: bool = False
 
     def text(self) -> str:
         return (self.question or self.query or "").strip()
 
 
-@app.get("/health")
-async def health() -> Any:
-    """Liveness. Reports 503 when the model is not loaded.
+@app.get("/live")
+async def live() -> dict[str, Any]:
+    """Liveness. The process is up.
 
-    A health check that stays green while the assistant is dead is worse
-    than no health check at all, so the container healthcheck and any
-    external monitor can see the failure.
+    This is what the container health check uses. It stays green even when
+    the model is missing, because the assistant can still answer with the
+    rule based parser and the templates, and taking the container out of
+    the pool would be worse than a degraded answer.
+    """
+    return {"status": "ok", "timestamp": time.time()}
+
+
+@app.get("/ready")
+async def ready() -> Any:
+    """Readiness. 503 when the model is not loaded.
+
+    A load balancer wants this one, so a container without its weights is
+    not sent traffic.
     """
     model = slm.status()
-    ready = slm.is_ready()
+    is_ready = slm.is_ready()
     body = {
-        "status": "ok" if ready else "degraded",
+        "status": "ok" if is_ready else "degraded",
         "model": model,
         "cache_entries": len(app_cache),
         "timestamp": time.time(),
         "timezone": settings.TIMEZONE,
     }
-    if not ready:
+    if not is_ready:
         return JSONResponse(status_code=503, content=body)
     return body
+
+
+@app.get("/health")
+async def health() -> Any:
+    """Both, for convenience. See /live and /ready."""
+    return await ready()
 
 
 @app.get("/sources")
@@ -156,11 +177,11 @@ async def sources() -> dict[str, Any]:
 # request that would wait too long is turned away with a clear message
 # rather than timing out in front of a judge.
 IN_FLIGHT = 0
-MAX_IN_FLIGHT = int(os.getenv("MAX_IN_FLIGHT", "4"))
+MAX_IN_FLIGHT = settings.MAX_IN_FLIGHT
 
 
 @app.post("/ask")
-async def ask(request: AskRequest) -> dict[str, Any]:
+async def ask(request: AskRequest, http_request: Request) -> dict[str, Any]:
     global IN_FLIGHT
     question = request.text()
     if not question:
@@ -176,9 +197,26 @@ async def ask(request: AskRequest) -> dict[str, Any]:
         }
     IN_FLIGHT += 1
     try:
-        result = await _run_ask(request, question)
-        state = getattr(request, "state", None)
-        result["request_id"] = getattr(state, "request_id", None)
+        try:
+            result = await asyncio.wait_for(
+                _run_ask(request, question), timeout=settings.REQUEST_DEADLINE_S
+            )
+        except TimeoutError:
+            # Better a clear answer than a client that times out with nothing.
+            return {
+                "status": "busy",
+                "answer": (
+                    "The live data services are slow right now and I could not finish "
+                    "in time. Please try again in a few seconds."
+                ),
+                "retry_after_seconds": 5,
+                "request_id": getattr(
+                    getattr(http_request, "state", None), "request_id", None
+                ),
+            }
+        result["request_id"] = getattr(
+            getattr(http_request, "state", None), "request_id", None
+        )
         return result
     finally:
         IN_FLIGHT -= 1
@@ -212,11 +250,27 @@ async def get_context(
 ) -> dict[str, Any]:
     intent = Intent(
         activity=activity,
-        location_text=location,
-        radius_km=radius_km,
-        profile=[p for p in profile.split(",") if p],
+        location_text=location[:200],
+        radius_km=max(0.5, min(radius_km, 50.0)),
+        profile=[p for p in profile.split(",") if p][:4],
     )
-    bundle = await gather_context(intent)
+    try:
+        bundle = await asyncio.wait_for(
+            gather_context(intent), timeout=settings.REQUEST_DEADLINE_S
+        )
+    except TimeoutError:
+        return {
+            "error": "The lookup was too slow. Please try again in a few seconds.",
+            "source_status": {},
+            "limitations": ["the context lookup timed out"],
+        }
+    except Exception as exc:
+        logger.exception("the context lookup failed")
+        return {
+            "error": "The lookup failed. Please try again in a few seconds.",
+            "source_status": {},
+            "limitations": [f"the context lookup failed: {type(exc).__name__}"],
+        }
     if "error" in bundle:
         return bundle
     engine = ExposureEngine()

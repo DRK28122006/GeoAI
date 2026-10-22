@@ -21,6 +21,7 @@ import re
 import time
 from typing import Any
 
+from app.config import load_config
 from app.context import Intent, gather_context
 from app.exposure_engine import ExposureEngine
 from app.planner import now_ist
@@ -89,17 +90,6 @@ PROFILE_KEYWORDS: dict[str, list[str]] = {
         "limping", "limp",
     ],
 }
-
-LOCATION_CUES = (
-    "near",
-    "around",
-    "in ",
-    "at ",
-    "close to",
-    "beside",
-    "opposite ",
-    "next to",
-)
 
 # words that start a question and are never a place name
 QUESTION_WORDS = {
@@ -324,14 +314,12 @@ class Pipeline:
             location_text=location,
             radius_km=radius,
             profile=profiles,
-            time_text="",
             day=parsed.get("day") if parsed.get("day") != "none" else None,
             part_of_day=(
                 parsed.get("part_of_day")
                 if parsed.get("part_of_day") != "none"
                 else None
             ),
-            hour=None,
             days_ahead=self._extract_days_ahead(question),
             intent_type=intent_type,
             missing=missing,
@@ -357,8 +345,11 @@ class Pipeline:
 
     @staticmethod
     def _extract_radius(question: str) -> float:
+        """The radius the user asked for, bounded to something we can serve."""
         m = re.search(r"(\d{1,3})\s*(?:km|kilomet)", question, re.IGNORECASE)
-        return float(m.group(1)) if m else 0.0
+        if not m:
+            return 0.0
+        return max(0.5, min(float(m.group(1)), 25.0))
 
     @staticmethod
     def _extract_days_ahead(question: str) -> int:
@@ -387,12 +378,7 @@ class Pipeline:
 
     @staticmethod
     def _default_radius(activity: str) -> float:
-        import yaml
-
-        from app.config import CONFIG_DIR
-
-        with open(CONFIG_DIR / "activities.yaml", "r", encoding="utf-8") as f:
-            acts = yaml.safe_load(f)
+        acts = load_config("activities")
         return float((acts.get(activity) or acts["running"]).get("radius_km", 5))
 
     # ------------------------------------------------------------------ run
@@ -415,6 +401,10 @@ class Pipeline:
             parse_source = "rules"
         stage["slm_parse_ms"] = round((time.perf_counter() - t0) * 1000)
 
+        if parse_source != "slm":
+            # Say so, rather than presenting a template answer as if the
+            # model had written it.
+            logger.warning("the model did not answer, the rules were used instead")
         intent = self._normalise(parsed, question, lat, lon)
         if lat is not None and lon is not None:
             intent.lat, intent.lon = lat, lon
@@ -493,7 +483,6 @@ class Pipeline:
                     self.slm.choose,
                     question,
                     [self._slot_option(best)],
-                    bundle.get("evidence", {}),
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("SLM chooser failed: %s", exc)
@@ -602,7 +591,7 @@ class Pipeline:
         t0 = time.perf_counter()
         try:
             choice = await self._run_blocking(
-                self.slm.choose, question, options, bundle.get("evidence", {})
+                self.slm.choose, question, options
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("SLM chooser failed: %s", exc)
@@ -716,6 +705,7 @@ class Pipeline:
             "activity": intent.activity,
             "location": origin.short_name if origin else intent.location_text,
             "radius_km": intent.radius_km,
+            "intent_type": intent.intent_type,
             "window": {
                 "start": window.start.isoformat(),
                 "end": window.end.isoformat(),

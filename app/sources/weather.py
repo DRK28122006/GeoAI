@@ -8,13 +8,10 @@ keeps the per-location payloads separate.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from app.config import settings
 from app.sources.base import BaseSource, SourceResult
-
-logger = logging.getLogger("geoai.weather")
 
 HOURLY_VARS = (
     "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,"

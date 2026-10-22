@@ -26,6 +26,10 @@ class ElevationSource(BaseSource):
             resp = await self_src._request(
                 "GET", "https://api.open-meteo.com/v1/elevation", params=params
             )
-            return resp.json()
+            body = resp.json()
+            # The endpoint answers with {"elevation": [...], ...}
+            if isinstance(body, dict):
+                return list(body.get("elevation") or [])
+            return list(body)
 
         return await self.fetch(cache_key, settings.TTL_ELEVATION, _fetch, params)

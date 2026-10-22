@@ -108,7 +108,6 @@ def test_explicit_span_beats_a_hallucinated_day():
         raw_text="morning walk near Powai in the next two days",
         day="next_weekend",
         part_of_day="morning",
-        hour=21,
         days_ahead=1,
         now=NOW,
     )
@@ -122,7 +121,6 @@ def test_model_hour_is_ignored_when_the_question_has_no_clock():
         raw_text="a walk near Powai tomorrow morning",
         day="tomorrow",
         part_of_day="morning",
-        hour=21,
         now=NOW,
     )
     assert all(h.hour < 12 for h in w.hours)

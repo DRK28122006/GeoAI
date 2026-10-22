@@ -18,18 +18,14 @@ hours, because the wind and the traffic both change.
 
 from __future__ import annotations
 
-import logging
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
-import yaml
 from pydantic import BaseModel, Field
 
-from app.config import CONFIG_DIR
+from app.config import load_config
 from app.planner import TZ
-
-logger = logging.getLogger("geoai.exposure")
 
 WIND_DIRS = [
     "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
@@ -84,7 +80,6 @@ def wind_dir_label(deg: float | None) -> str:
 
 class Slot(BaseModel):
     slot_id: str
-    venue_id: str
     place: str
     lat: float
     lon: float
@@ -106,20 +101,14 @@ class EngineResult(BaseModel):
     slots: list[Slot] = Field(default_factory=list)
     all_slots: list[Slot] = Field(default_factory=list)
     avoid: list[dict[str, Any]] = Field(default_factory=list)
-    alternatives: list[Slot] = Field(default_factory=list)
-    notes: list[str] = Field(default_factory=list)
 
 
 class ExposureEngine:
     def __init__(self) -> None:
-        with open(CONFIG_DIR / "activities.yaml", "r", encoding="utf-8") as f:
-            self.activities: dict[str, Any] = yaml.safe_load(f)
-        with open(CONFIG_DIR / "hazards.yaml", "r", encoding="utf-8") as f:
-            self.hazard_cfg: dict[str, Any] = yaml.safe_load(f)
-        with open(CONFIG_DIR / "exposure_weights.yaml", "r", encoding="utf-8") as f:
-            self.weights: dict[str, Any] = yaml.safe_load(f)
-        with open(CONFIG_DIR / "profiles.yaml", "r", encoding="utf-8") as f:
-            self.profile_cfg: dict[str, Any] = yaml.safe_load(f)
+        self.activities = load_config("activities")
+        self.hazard_cfg = load_config("hazards")
+        self.weights = load_config("exposure_weights")
+        self.profile_cfg = load_config("profiles")
 
     # ------------------------------------------------------------- utilities
     def _activity(self, activity: str) -> dict[str, Any]:
@@ -347,7 +336,7 @@ class ExposureEngine:
                 return 100.0
             return 92.0
         blue = int(self.weights["daylight"]["blue_hour_after_sunset_min"])
-        if sunset_dt < when <= sunset_dt + timedelta_minutes(blue):
+        if sunset_dt < when <= sunset_dt + timedelta(minutes=blue):
             return 70.0
         return 25.0
 
@@ -394,6 +383,7 @@ class ExposureEngine:
     def score(self, bundle: dict[str, Any]) -> EngineResult:
         intent = bundle["intent"]
         venues = bundle.get("venues") or []
+        elevations = bundle.get("elevation") or []
         weather_list = bundle.get("weather") or []
         aq = bundle.get("air_quality") or {}
         aq_list = aq.get("forecasts") or []
@@ -442,6 +432,9 @@ class ExposureEngine:
         distances = routes.get("distances") or []
 
         for vi, venue in enumerate(venues):
+            elevation = (
+                elevations[vi] if vi < len(elevations) else None
+            )
             w_hourly = (weather_list[vi + 1] if vi + 1 < len(weather_list) else {}) or {}
             a_hourly = (
                 aq_list[vi + 1] if vi + 1 < len(aq_list) else (aq_list[0] if aq_list else {})
@@ -495,6 +488,10 @@ class ExposureEngine:
 
                 # ---------------------------------------------------- scoring
                 comfort = self._comfort_score(temp, humidity, act)
+                if elevation is not None and act.get("_key") == "hiking":
+                    # every 500 m of height makes a walk harder
+                    climb = max(0.0, float(elevation) - 500.0)
+                    comfort = max(0.0, comfort - climb / 100.0)
                 air = self._air_score(local_pm25, us_aqi, o3)
                 # The activity decides how much the air quality matters: a
                 # photographer cares less than a runner with asthma.
@@ -582,7 +579,6 @@ class ExposureEngine:
 
                 slot = Slot(
                     slot_id=f"S{vi + 1}-{when.strftime('%m%d%H')}",
-                    venue_id=venue.id,
                     place=venue.name,
                     lat=venue.lat,
                     lon=venue.lon,
@@ -640,13 +636,7 @@ class ExposureEngine:
 
         slots.sort(key=lambda s: s.score, reverse=True)
         good = [s for s in slots if not s.disqualified]
-        result = EngineResult(
-            slots=good, all_slots=slots, avoid=avoid[:40]
-        )
-        result.notes.append(
-            f"Scored {len(slots)} venue-hour combinations; {len(good)} passed the hard constraints."
-        )
-        return result
+        return EngineResult(slots=good, all_slots=slots, avoid=avoid[:40])
 
     @staticmethod
     def _sunset_for(daylight: dict[str, Any], date_iso: str) -> tuple[str | None, str | None]:
@@ -659,9 +649,3 @@ class ExposureEngine:
         if sunsets:
             return (sunrises[0] if sunrises else None), sunsets[0]
         return None, None
-
-
-def timedelta_minutes(minutes: int):
-    from datetime import timedelta
-
-    return timedelta(minutes=minutes)

@@ -10,13 +10,10 @@ out, and falls back to a deterministic template if it fails twice.
 
 from __future__ import annotations
 
-import logging
 import re
 from typing import Any
 
 from pydantic import BaseModel, Field
-
-logger = logging.getLogger("geoai.verifier")
 
 UNIT_NUMBER = re.compile(
     r"(?<![\w.])(\d{1,3}(?:\.\d+)?)\s*"
