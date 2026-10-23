@@ -3,7 +3,7 @@
 An AI assistant, powered by a small language model, that tells a person
 **where and when to go outdoors** and what to take, what to watch out for and
 when to stay home.
-[![Architecture diagram of drk28122006/geoai](https://gitdiagram.com/drk28122006/geoai/diagram.png)](https://gitdiagram.com/drk28122006/geoai?utm_source=readme&utm_medium=picture)
+
 ```
 "I have mild asthma, where's good for a morning walk near JP Nagar tomorrow?"
 
