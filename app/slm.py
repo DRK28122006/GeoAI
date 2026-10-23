@@ -401,18 +401,34 @@ class SLM:
                 return "?"
             return round(float(value), digits)
 
-        # The prompt is kept short on purpose: every token costs time on a
-        # CPU, and the model only needs enough to pick and name a place.
         table = "\n".join(
             f"{o['slot_id']} | {o['place']} | {o['time']} | score {number(o['score'])} | "
             f"{number(o.get('apparent_temp_c'))}C | AQI {number(o.get('us_aqi'))} | "
             f"rain {number(o.get('precip_prob'))}%"
             for o in options
         )
-        # The prompt is kept small on purpose: every token costs time on a
-        # CPU, and the facts the model needs are all in the table.
-        user = f"TASK: choose\nOptions:\n{table}\n\nQuestion: {question[:200]}"
-        return self._complete_json(SHARED_SYSTEM, user, CHOICE_SCHEMA, max_tokens=80)
+
+        user = (
+            f"TASK: choose\n"
+            f"Options:\n{table}\n\n"
+            f"Question: {question[:200]}\n\n"
+            f"Instructions: Pick the best slot. In the 'headline', name the place and time. "
+            f"Also provide a 'preparation_guide': one short sentence on what to carry "
+            f"or watch for based on the weather (e.g., 'Carry an umbrella for rain' or "
+            f"'Wear a mask for AQI')."
+        )
+
+        # We update the schema in the call to include preparation_guide
+        schema = {
+            **CHOICE_SCHEMA,
+            "properties": {
+                **CHOICE_SCHEMA["properties"],
+                "preparation_guide": {"type": "string", "maxLength": 140},
+            },
+            "required": ["slot_id", "headline", "preparation_guide"],
+        }
+
+        return self._complete_json(SHARED_SYSTEM, user, schema, max_tokens=120)
 
 
 slm = SLM()

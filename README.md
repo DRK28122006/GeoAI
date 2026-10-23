@@ -8,6 +8,7 @@ when to stay home.
 "I have mild asthma, where's good for a morning walk near JP Nagar tomorrow?"
 
 Go to B R Ambedkar Park around 10:00 on Fri 23 Oct.
+Preparation: Carry a mask as air quality is moderate.
 - E_WEATHER: feels like 28C with 16% chance of rain
 - E_AQ: US-AQI 42 locally
 - E_HAZARDS: local exposure index 1.04
@@ -23,6 +24,7 @@ This is a submission for the **GeoAI Hackathon at CSRE, IIT Bombay**
 (deadline 24 October 2026, 11:59 PM IST). The rulebook the submission is
 judged against is the one the organisers published with the problem
 statement; the last section of this file maps it point by point.
+
 
 ---
 
