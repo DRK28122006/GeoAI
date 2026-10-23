@@ -9,12 +9,14 @@ when to stay home.
 
 Go to B R Ambedkar Park around 10:00 on Fri 23 Oct.
 Preparation: Carry a mask as air quality is moderate.
-- E_WEATHER: feels like 28C with 16% chance of rain
-- E_AQ: US-AQI 42 locally
-- E_HAZARDS: local exposure index 1.04
-- E_ROUTES: about 11 min away
+- feels like 28C with 16% chance of rain
+- US-AQI 42 locally
+- local exposure index 1.04
+- about 11 min away
 Carry: Water bottle, Your inhaler.
 Watch out for: Limits were tightened because of: asthma.
+
+Data provided by © OpenStreetMap contributors and Open-Meteo.
 ```
 
 Every number in that answer came from a live API call, and every one of them

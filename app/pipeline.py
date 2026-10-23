@@ -792,9 +792,10 @@ class Pipeline:
         if prep:
             parts.append(f"Preparation: {prep}")
 
-        # 2. Add the engine's data-backed reasons
+        # 2. Add the engine's data-backed reasons (layman version)
         for reason in self._template_why(chosen):
-            parts.append(f"- {reason}")
+            clean_reason = re.sub(r"^E_[A-Z_]+: ", "", reason)
+            parts.append(f"- {clean_reason}")
 
         # 3. Add templated carry/watch lists (as a safety net)
         carry = self._template_carry(chosen, bundle)
@@ -810,6 +811,9 @@ class Pipeline:
         if len(top_slots) > 1:
             alts = ", ".join(f"{s.place} at {s.when.strftime('%H:%M')}" for s in top_slots[1:3])
             parts.append(f"Alternatives: {alts}.")
+
+        # Rulebook requirement: Attribution must be in the answer text
+        parts.append("\nData provided by © OpenStreetMap contributors and Open-Meteo.")
 
         return "\n".join(parts)
 
