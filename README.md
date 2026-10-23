@@ -4,6 +4,9 @@ An AI assistant, powered by a small language model, that tells a person
 **where and when to go outdoors** and what to take, what to watch out for and
 when to stay home.
 
+**Live API:** <https://85-211-194-173.sslip.io> — interactive docs at
+<https://85-211-194-173.sslip.io/docs>.
+
 ```
 "I have mild asthma, where's good for a morning walk near JP Nagar tomorrow?"
 
@@ -113,9 +116,10 @@ app/
   sources/            geocode, overpass, weather, airquality, routing,
                       daylight, elevation, geofabrik
   configs/            activities, profiles, hazards, weights
-tests/                77 unit tests
+tests/                126 unit tests
 scripts/              eval_queries.py, check_grammar.py, build_wheel.sh
 docs/                 API.md for the frontend, RUNBOOK.md, PRD.md, TODO.md
+HANDOFF.md            live deployment, VM access and operational commands
 hf_repo/              the model card, the prompt contract, the upload script
 ```
 
@@ -224,6 +228,9 @@ docker compose up -d --build
 
 ## The API
 
+**Live base URL:** `https://85-211-194-173.sslip.io`  
+**Interactive docs:** `https://85-211-194-173.sslip.io/docs`
+
 Full details, with a request, a response and a JavaScript example, are in
 [`docs/API.md`](docs/API.md).
 
@@ -244,7 +251,9 @@ collection for the map, the data timestamp, the sources and the limitations.
 `status` is one of `ok`, `partial`, `needs_clarification`, `out_of_scope` or
 `busy`. The frontend should show a progress state: a question fetches live
 data from six services, scores every venue against every hour and then writes
-the answer, so it takes 20 to 40 seconds.
+the answer, so it takes 20 to 40 seconds on a laptop and **60 to 90 seconds**
+on the 2 vCPU deployment. Use a **120-second** client timeout and retry on
+`status: "busy"`.
 
 ---
 
@@ -408,14 +417,15 @@ These are real, and the assistant says the same things in its own responses.
 - **OpenStreetMap coverage is uneven.** In a small city there may be one
   mapped pitch or none. The assistant says so instead of inventing a place.
 - **The public Overpass mirrors are slow and throttled.** They are the
-  reason the answer takes 20 to 40 seconds. A regional OpenStreetMap
-  extract removes the dependency and the code is there
+  reason the answer takes 60 to 90 seconds on the 2 vCPU deployment. A
+  regional OpenStreetMap extract removes the dependency and the code is there
   (`app/sources/geofabrik.py`), but it needs a download that cannot be
   guaranteed before a demonstration, so it is off by default.
 - **The model is small.** It misreads an unusual phrasing now and then.
   The code overrides it wherever the question is clear.
-- **A question takes 20 to 40 seconds.** The live data is 8 to 25 seconds of
-  that and the model 8 to 20.
+- **A question takes 60 to 90 seconds on the 2 vCPU deployment** (20 to 40
+  seconds on a laptop). The live data is the larger part of that; the model is
+  10 to 30 seconds.
 
 ---
 
@@ -451,7 +461,7 @@ These are real, and the assistant says the same things in its own responses.
 | Live data from free and open sources, disclosed, rate limited, cached | `app/sources/`, the table above |
 | A model of at most 3B, open weights, run by us | `Qwen3-1.7B`, 2.03B, llama.cpp |
 | The model on Hugging Face, with a card and an open licence | `som-doe2007/geoai-outdoor-assistant` |
-| A live API endpoint | `POST /ask` |
+| A live API endpoint | `POST https://85-211-194-173.sslip.io/ask` |
 | A code repository | this repository |
 | A README with how to run, the model, the sources and the endpoint URL | this file |
 | A presentation | the team owns the slides |

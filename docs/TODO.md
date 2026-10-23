@@ -67,7 +67,14 @@ Done, from two independent audits of the code:
 
 ## Still open, and it needs a person
 
-- [ ] The hosting decision and the endpoint URL in the README
+- [x] The hosting decision and the endpoint URL in the README
+      - Azure VM `geoai-api`, Malaysia West, `Standard_B2als_v2`
+        (2 vCPU / 4 GB, x64), Ubuntu 24.04
+      - `https://85-211-194-173.sslip.io` (Caddy + Let's Encrypt)
+      - API bound to `127.0.0.1:7860`; only Caddy is public
+- [ ] Push `5a90499` and the latest local docs/handoff commit to GitHub. The
+      VM runs the current local tree; the GitHub repo is two commits behind.
+- [ ] Set an Azure budget alert (for example $20 / $50 / $80).
 - [ ] The Geofabrik regional extract, to remove the Overpass dependency.
       The public mirrors are slow and one of them serves a single request at
       a time, which is now the biggest source of latency

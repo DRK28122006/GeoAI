@@ -18,10 +18,12 @@ frontend  ──POST /ask──▶  our service  ──▶ geocode, venues, weat
 ## The base URL
 
 ```
-https://<the deployed host>
+https://85-211-194-173.sslip.io
 ```
 
-It will be a real address by the time we submit. For local development:
+That is the live deployment. It is a free `sslip.io` hostname tied to the
+VM's static public IP, with a Let's Encrypt certificate managed by Caddy.
+For local development:
 
 ```bash
 cd ~/Projects/GEOai/deepesh-repo
@@ -119,7 +121,7 @@ GET /context    the raw evidence bundle, for debugging
 ## A plain JavaScript example
 
 ```js
-const API = "https://<the deployed host>";
+const API = "https://85-211-194-173.sslip.io";
 
 async function ask(question) {
   const response = await fetch(`${API}/ask`, {
@@ -159,9 +161,9 @@ for (const feature of result.map_geojson.features) {
   flag is there so nobody is misled.
 - **`limitations` are not errors.** They are the honest caveats, for example
   "the forecast grid is coarse" or "the places were spread over 5 km".
-- **A question takes 20 to 40 seconds.** It fetches live data from six
-  services, scores every venue against every hour and then writes the answer.
-  Please show a progress state, and do not set a client timeout below 60
-  seconds.
+- **A question takes 60 to 90 seconds on the 2 vCPU deployment.** It fetches
+  live data from six services, scores every venue against every hour and then
+  writes the answer. Please show a progress state, use a **120-second** client
+  timeout, and retry when `status` is `busy`.
 - **Nothing here is fabricated.** If a live source is down, the answer says
   which one, instead of inventing a number.
