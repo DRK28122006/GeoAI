@@ -299,19 +299,23 @@ in this file, as the rulebook requires.
 | Speed here | 167 tokens per second prefill, 17 per second generation, 5 to 9 under the JSON grammar |
 | Fine-tuning | none. The base model is used unchanged, as the rulebook allows |
 
-The repository on the Hub holds the base weights, so it loads with the
-standard API:
+The repository on the Hub holds the GGUF that the service actually loads,
+the prompt contract, the two JSON schemas the model is constrained to, and
+the serving configuration, so the contract is inspectable rather than
+described:
 
 ```python
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from llama_cpp import Llama
 
-model = AutoModelForCausalLM.from_pretrained("som-doe2007/geoai-outdoor-assistant")
-tokenizer = AutoTokenizer.from_pretrained("som-doe2007/geoai-outdoor-assistant")
+llm = Llama.from_pretrained(
+    "som-doe2007/geoai-outdoor-assistant",
+    filename="Qwen3-1.7B-Q4_K_M.gguf",
+    n_ctx=4096,
+)
 ```
 
-It also holds the GGUF that the service actually loads, the prompt contract
-and the two JSON schemas the model is constrained to, so the contract is
-inspectable rather than described.
+The unquantized upstream model, `Qwen/Qwen3-1.7B`, loads with the standard
+transformers API if you want to inspect or re-quantize it.
 
 ### Two details that matter
 

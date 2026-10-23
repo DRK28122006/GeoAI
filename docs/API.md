@@ -4,7 +4,8 @@
 
 The Hugging Face repository (`som-doe2007/geoai-outdoor-assistant`) is a
 deliverable for the judges: it proves the project ships a real open-weights
-model with a model card and a licence, and it loads with `from_pretrained`.
+model with a model card and a licence, and it loads with
+`Llama.from_pretrained`.
 It is **not** the app. The model is one step inside a pipeline, and that
 pipeline is what answers questions.
 

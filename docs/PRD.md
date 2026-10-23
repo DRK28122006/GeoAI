@@ -336,7 +336,7 @@ Action: whoever has a PRO account (or can subscribe) creates the Space on Day 1 
 | Deliverable | Owner | Done when |
 | --- | --- | --- |
 | Live API endpoint |  | `/ask` answers fresh queries from outside our network |
-| HF model repo (public) |  | Safetensors weights (or LoRA adapter with exact base pointer), model card (base model, changes, intended use, limitations), Apache 2.0, loads with `from_pretrained`; GGUF Q4\_K\_M added for serving |
+| HF model repo (public) |  | GGUF Q4\_K\_M weights, model card (upstream model, changes, intended use, limitations), Apache 2.0, loads with `Llama.from_pretrained` |
 | Code repository |  | Full source, tests, eval harness, configs |
 | README |  | How to run, base model, data sources, API URL, disclosures, limitations |
 | Slides (4 to 6) |  | Problem and approach, architecture, worked example, model and fine-tuning, honest limitations |
