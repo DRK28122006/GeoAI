@@ -1,23 +1,20 @@
 #!/usr/bin/env bash
 # Publish the model to the Hugging Face Hub.
 #
-# The weights are the base model's, unchanged. The fastest way to get a
-# repository that loads with from_pretrained is to duplicate the base model
-# on the Hub, then upload our card, our prompt contract and the GGUF we
-# serve:
+# The repository is GGUF-only: it ships the Q4_K_M build the service loads,
+# the model card, the prompt contract, the JSON schemas and the serving
+# configuration. The unquantized weights stay in Qwen/Qwen3-1.7B, so nothing
+# is duplicated here.
 #
-#   1. Open https://huggingface.co/Qwen/Qwen3-1.7B and click "Duplicate".
-#      Name it <your-org>/geoai-outdoor-assistant. That copies the weights,
-#      the config and the tokenizer into your namespace, so from_pretrained
-#      works on it straight away.
-#   2. Create a write token: Settings -> Access Tokens -> New token, role
+#   1. Create a write token: Settings -> Access Tokens -> New token, role
 #      Write.
-#   3. Run this script with the token:
+#   2. Run:
 #
 #      HF_TOKEN=hf_xxx ./hf_repo/upload.sh <your-org>/geoai-outdoor-assistant
 #
-# The script checks the repository before and after the upload, so it fails
-# loudly rather than leaving a repository that cannot be loaded.
+# The script creates the repository if it does not exist, uploads the files,
+# and checks the result. It fails loudly rather than leaving a repository
+# that cannot be loaded.
 set -euo pipefail
 
 REPO="${1:-}"
@@ -46,8 +43,8 @@ if ! "$PY" -c "import huggingface_hub" 2>/dev/null; then
 fi
 
 # The checks and the upload both go through the Python API. The command line
-# client renames its subcommands between versions ("huggingface-cli api" does
-# not exist in the current one), so the API is the stable path.
+# client renames its subcommands between versions, so the API is the stable
+# path.
 hf_python() {
     "$PY" - "$@" <<'PY'
 import sys
@@ -55,41 +52,22 @@ from huggingface_hub import HfApi
 
 repo = sys.argv[1]
 api = HfApi(token=None)
-# list_repo_files returns the names as plain strings
 for name in api.list_repo_files(repo):
     print(name)
 PY
 }
 
-echo "checking $REPO"
-FILES="$(hf_python "$REPO" || true)"
-if [ -z "$FILES" ]; then
-    echo "the repository does not exist or the token cannot see it." >&2
-    echo "duplicate https://huggingface.co/Qwen/Qwen3-1.7B first, then run this again." >&2
-    exit 1
-fi
+# ------------------------------------------------------------------- create
+echo "creating $REPO if needed"
+"$PY" - "$REPO" <<'PY'
+import sys
+from huggingface_hub import HfApi
 
-missing=""
-for want in config.json tokenizer.json; do
-    if printf '%s\n' "$FILES" | grep -qx "$want"; then
-        echo "  ok      $want"
-    else
-        echo "  MISSING $want"
-        missing="yes"
-    fi
-done
-if printf '%s\n' "$FILES" | grep -q "safetensors"; then
-    echo "  ok      the weights are there, from_pretrained will work"
-else
-    echo "  MISSING the weights, from_pretrained will NOT work"
-    missing="yes"
-fi
-if [ -n "$missing" ]; then
-    echo
-    echo "the repository is not a copy of the base model yet." >&2
-    echo "duplicate https://huggingface.co/Qwen/Qwen3-1.7B first, then run this again." >&2
-    exit 1
-fi
+repo = sys.argv[1]
+api = HfApi()
+api.create_repo(repo_id=repo, repo_type="model", private=False, exist_ok=True)
+print("  ready")
+PY
 
 # ------------------------------------------------------------------- upload
 echo
@@ -145,7 +123,7 @@ HfApi().upload_file(
 print("  Qwen3-1.7B-Q4_K_M.gguf")
 PY
 else
-    echo "note: $GGUF is not here, so the GGUF was not uploaded."
+    echo "note: $GGUF is not here, so the GGUF was not uploaded." >&2
 fi
 
 # -------------------------------------------------------------- post-flight
@@ -153,7 +131,7 @@ echo
 echo "checking the result"
 FILES="$(hf_python "$REPO" || true)"
 missing=""
-for want in README.md config.json tokenizer.json prompts.md intent.schema.json choice.schema.json serving_config.json; do
+for want in README.md prompts.md intent.schema.json choice.schema.json serving_config.json Qwen3-1.7B-Q4_K_M.gguf; do
     if printf '%s\n' "$FILES" | grep -qx "$want"; then
         echo "  ok      $want"
     else
@@ -161,12 +139,6 @@ for want in README.md config.json tokenizer.json prompts.md intent.schema.json c
         missing="yes"
     fi
 done
-if printf '%s\n' "$FILES" | grep -q "safetensors"; then
-    echo "  ok      the weights are there, from_pretrained will work"
-else
-    echo "  MISSING the weights, from_pretrained will NOT work"
-    missing="yes"
-fi
 
 if [ -n "$missing" ]; then
     echo
@@ -177,5 +149,5 @@ fi
 echo
 echo "done. make sure the licence says apache-2.0 in the repository settings."
 echo "load it with:"
-echo "  from transformers import AutoModelForCausalLM"
-echo "  model = AutoModelForCausalLM.from_pretrained(\"$REPO\")"
+echo "  from llama_cpp import Llama"
+echo "  llm = Llama.from_pretrained(\"$REPO\", filename=\"Qwen3-1.7B-Q4_K_M.gguf\")"

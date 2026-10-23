@@ -46,12 +46,14 @@ Done, from two independent audits of the code:
 ## 4. Hugging Face
 
 - [x] 4.1 The model card names the base model, the licence and the limits
-- [x] 4.2 The repository loads with from_pretrained (it has to be a duplicate
-      of the base model, and the script checks that)
+- [x] 4.2 The repository loads with from_pretrained (Llama.from_pretrained
+      on the GGUF; the unquantized upstream is linked, not duplicated)
 - [x] 4.3 The GGUF we serve is uploaded
 - [x] 4.4 The upload script checks the repository before and after
 - [x] 4.5 The card documents the prompt contract, and the schemas are
       published next to it
+- [x] 4.6 The repository is GGUF-only: card, load snippet and upload script
+      match, and the base weights are not duplicated
 
 ## 5. Final
 
@@ -65,11 +67,14 @@ Done, from two independent audits of the code:
 
 ## Still open, and it needs a person
 
-- [ ] The Hugging Face repository: duplicate `Qwen/Qwen3-1.7B`, then run
-      `HF_TOKEN=hf_xxx ./hf_repo/upload.sh <your-org>/geoai-outdoor-assistant`
-- [ ] Pushing the code to GitHub
-- [ ] The hosting decision and the endpoint URL in the README
-- [ ] A WAQI token, for the station correction
+- [x] The hosting decision and the endpoint URL in the README
+      - Azure VM `geoai-api`, Malaysia West, `Standard_B2als_v2`
+        (2 vCPU / 4 GB, x64), Ubuntu 24.04
+      - `https://85-211-194-173.sslip.io` (Caddy + Let's Encrypt)
+      - API bound to `127.0.0.1:7860`; only Caddy is public
+- [ ] Push `5a90499` and the latest local docs/handoff commit to GitHub. The
+      VM runs the current local tree; the GitHub repo is two commits behind.
+- [ ] Set an Azure budget alert (for example $20 / $50 / $80).
 - [ ] The Geofabrik regional extract, to remove the Overpass dependency.
       The public mirrors are slow and one of them serves a single request at
       a time, which is now the biggest source of latency

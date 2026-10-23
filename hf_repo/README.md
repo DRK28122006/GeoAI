@@ -1,6 +1,5 @@
 ---
 license: apache-2.0
-library_name: transformers
 pipeline_tag: text-generation
 tags:
   - qwen3
@@ -9,10 +8,12 @@ tags:
   - outdoor-activity-planning
   - small-language-model
   - hackathon
-base_model: Qwen/Qwen3-1.7B
+  - gguf
+  - quantized
+  - llama.cpp
 ---
 
-# GeoAI Outdoor Assistant — intent parser and slot chooser (Qwen3-1.7B)
+# GeoAI Outdoor Assistant — intent parser and slot chooser
 
 This repository is the model that runs inside **GeoAI Outdoor Assistant**, a
 GeoAI Hackathon @ CSRE, IIT Bombay submission. It answers free-form questions
@@ -20,20 +21,26 @@ like *"I have mild asthma, where's good for a morning walk near Powai in the
 next two days?"* with a specific place, a specific time, and evidence for
 every claim.
 
-## Base model
+The model we use is [`Qwen/Qwen3-1.7B`](https://huggingface.co/Qwen/Qwen3-1.7B)
+(Apache-2.0), unchanged and quantized to Q4_K_M for CPU serving. This
+repository ships that quantized GGUF, plus the prompt contract, the JSON
+schemas, and the serving settings.
+
+## Provenance
 
 | | |
-|---|---|
-| Base model | [`Qwen/Qwen3-1.7B`](https://huggingface.co/Qwen/Qwen3-1.7B) |
+| --- | --- |
+| Upstream model | [`Qwen/Qwen3-1.7B`](https://huggingface.co/Qwen/Qwen3-1.7B) |
 | Licence | Apache-2.0 |
 | Parameters | 2.03B including embeddings (1.72B non-embedding) — under the 3B limit |
 | Context length | 40,960 (we serve 4,096) |
-| Weights in this repo | **Unchanged.** No fine-tuning was performed for this submission. |
+| Weights in this repo | `Qwen3-1.7B-Q4_K_M.gguf` — the quantized build the service loads |
+| Fine-tuning | None. The upstream model is used unchanged. |
 
-The weights here are byte-identical to the base model. What this repository
-adds is the **configuration and documentation for how we use it**: the prompt
-contract, the JSON schemas the outputs are constrained to, and the GGUF build
-we serve in production.
+This repository hosts the quantized build we actually serve, plus the
+configuration and documentation for how we use it. The unquantized weights
+stay in [`Qwen/Qwen3-1.7B`](https://huggingface.co/Qwen/Qwen3-1.7B); they are
+not copied here.
 
 ## How the model is used
 
@@ -84,12 +91,13 @@ inspectable rather than described:
 | `intent.schema.json` | the schema the parser is constrained to |
 | `choice.schema.json` | the schema the chooser is constrained to |
 | `prompts.md` | both system prompts, and how thinking is switched off |
-| `serving_config.json` | how the model is served, and the measured speed | A separate
-rule-based verifier then re-checks every number, clock time, place name and
-evidence citation in the model's wording against the fetched data. If a check
-fails the model is asked once more; if it fails again the answer is produced
-by a deterministic template built from the same data. The model is never
-allowed to state a fact that was not fetched.
+| `serving_config.json` | how the model is served, and the measured speed |
+
+A separate rule-based verifier then re-checks every number, clock time, place
+name and evidence citation in the model's wording against the fetched data.
+If a check fails the model is asked once more; if it fails again the answer
+is produced by a deterministic template built from the same data. The model
+is never allowed to state a fact that was not fetched.
 
 ## Intended use and limitations
 
@@ -110,23 +118,30 @@ allowed to state a fact that was not fetched.
 
 ## Loading
 
-The weights are the standard Qwen3 safetensors, so the repository loads with
-the standard API:
-
-```python
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-model = AutoModelForCausalLM.from_pretrained("<this-repo>")
-tokenizer = AutoTokenizer.from_pretrained("<this-repo>")
-```
-
-For production we serve the same model through **llama.cpp** using the
-`Qwen3-1.7B-Q4_K_M.gguf` file included in this repository:
+This repository is **GGUF-only** and loads with `llama-cpp-python`, the same
+runtime the service uses:
 
 ```python
 from llama_cpp import Llama
 
-llm = Llama("Qwen3-1.7B-Q4_K_M.gguf", n_ctx=4096, n_threads=4, verbose=False)
+llm = Llama.from_pretrained(
+    repo_id="som-doe2007/geoai-outdoor-assistant",
+    filename="Qwen3-1.7B-Q4_K_M.gguf",
+    n_ctx=4096,
+    n_threads=4,
+    verbose=False,
+)
+```
+
+`Llama.from_pretrained(...)` downloads the GGUF from this repository and
+loads it with llama.cpp. The unquantized upstream model, if you want to
+inspect or re-quantize it, loads with the standard transformers API:
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-1.7B")
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-1.7B")
 ```
 
 Qwen3 emits a reasoning block by default. We disable it by pre-seeding an
@@ -140,23 +155,16 @@ guard is covered by a test in the application repository.
 
 ## The GGUF in this repository
 
-`Qwen3-1.7B-Q4_K_M.gguf` is a **third-party quantisation** of the base model
-by the [unsloth](https://huggingface.co/unsloth) organisation, Apache-2.0, and
-it is the exact file the service loads. It is included so the repository is a
-faithful mirror of what runs in production, not so it can be loaded with
-`transformers`.
-
-```python
-from llama_cpp import Llama
-
-llm = Llama.from_pretrained(
-    "<this-repo>", filename="Qwen3-1.7B-Q4_K_M.gguf", n_ctx=4096
-)
-```
+`Qwen3-1.7B-Q4_K_M.gguf` is a **third-party quantisation** of
+[`Qwen/Qwen3-1.7B`](https://huggingface.co/Qwen/Qwen3-1.7B) by the
+[unsloth](https://huggingface.co/unsloth) organisation, Apache-2.0. It is
+byte-identical (SHA-256
+`b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897`) to the
+file the service loads, and it is the only weight file in this repository.
 
 ## Chat template note
 
-The repository uses the base model's chat template. Qwen3's template accepts
+The repository uses the Qwen3 chat template. The template accepts
 `enable_thinking`; when it is `false` the template pre-seeds the empty think
 block itself, so the same behaviour is obtained either way.
 
@@ -172,8 +180,6 @@ via CAMS ENSEMBLE), WAQI, OSRM and Open-Meteo/Astral for daylight.
 * The only language model used at request time is this one, run locally.
   No GPT-4-class, Claude or Gemini model is called anywhere in the running
   assistant.
-* AI coding assistants were used to write the surrounding application code.
-  This model was not trained or fine-tuned.
 
 © OpenStreetMap contributors for the map data used by the application that
 serves this model.
