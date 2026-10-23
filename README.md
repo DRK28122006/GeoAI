@@ -53,7 +53,7 @@ For developers wishing to run the system locally:
    ```
 
 3. **Download Model Weights**:
-   Download `Qwen3-1.7B-Q4_K_M.gguf` from the [Model Repository](https://huggingface.co/Deepesh2006/geoai-outdoor-assistant) and place it in the `models/` directory.
+   Download `Qwen3-1.7B-Q4_K_M.gguf` from the [Model Repository](https://huggingface.co/som-doe2007/geoai-outdoor-assistant) and place it in the `models/` directory.
 
 4. **Configure Environment**:
    Create a `.env` file:
