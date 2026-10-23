@@ -778,9 +778,7 @@ class Pipeline:
         strict.verified = not strict.violations
         return strict
 
-    def _compose(
-        self, chosen, choice, top_slots, engine_result, bundle
-    ) -> str:
+    def _compose(self, chosen, choice, top_slots, engine_result, bundle) -> str:
         headline = (choice or {}).get("headline") or ""
         if not headline:
             headline = (
@@ -788,20 +786,35 @@ class Pipeline:
                 f"{chosen.when.strftime('%a %d %b')}."
             )
         parts = [headline.strip()]
-        # The engine's reasons carry the value we fetched and its source.
+
+        # 1. Add the SLM's preparation guide if available
+        prep = (choice or {}).get("preparation_guide")
+        if prep:
+            parts.append(f"Preparation: {prep}")
+
+        # 2. Add the engine's data-backed reasons (layman version)
         for reason in self._template_why(chosen):
-            parts.append(f"- {reason}")
+            clean_reason = re.sub(r"^E_[A-Z_]+: ", "", reason)
+            parts.append(f"- {clean_reason}")
+
+        # 3. Add templated carry/watch lists (as a safety net)
         carry = self._template_carry(chosen, bundle)
         if carry:
             parts.append("Carry: " + ", ".join(carry[:5]) + ".")
         watch = self._template_watch(chosen, bundle)
         if watch:
             parts.append("Watch out for: " + ", ".join(watch[:5]) + ".")
+
         for note in self._profile_advice(bundle)[:2]:
             parts.append(f"- {note}")
+
         if len(top_slots) > 1:
             alts = ", ".join(f"{s.place} at {s.when.strftime('%H:%M')}" for s in top_slots[1:3])
             parts.append(f"Alternatives: {alts}.")
+
+        # Rulebook requirement: Attribution must be in the answer text
+        parts.append("\nData provided by © OpenStreetMap contributors and Open-Meteo.")
+
         return "\n".join(parts)
 
     @staticmethod
