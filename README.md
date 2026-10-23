@@ -17,7 +17,7 @@ curl -X POST https://geoai-outdoor-assistant.azurewebsites.net/ask \
 ## 🧠 Model Registry
 The system utilizes a Small Language Model (SLM) that is hosted publicly for transparency and verification.
 
-- **Model Repository**: [Deepesh2006/geoai-outdoor-assistant](https://huggingface.co/Deepesh2006/geoai-outdoor-assistant)
+- **Model Repository**: [som-doe2007/geoai-outdoor-assistant](https://huggingface.co/som-doe2007/geoai-outdoor-assistant)
 - **Base Model**: `Qwen/Qwen3-1.7B` (Unmodified)
 - **Parameters**: ~2.03B (Total) / 1.72B (Non-embedding)
 - **Quantization**: `Q4_K_M` GGUF
