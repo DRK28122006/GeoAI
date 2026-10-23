@@ -1,1 +1,14 @@
+.venv/
 models/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.cache/
+build/
+dist/
+*.egg-info/
+server.log
+.env
+*.bak
+wheels/

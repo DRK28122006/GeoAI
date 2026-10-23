@@ -1,38 +1,206 @@
-import os
+"""Central configuration.
 
-from pydantic_settings import BaseSettings
+Two User-Agent rules were established empirically and must not be merged:
+
+* Nominatim (OSM Foundation) 403s a short contact-style UA. It only answers a
+  browser-shaped UA that still carries a contact address.
+* Overpass 406s **any** UA that starts with "Mozilla/". It only answers a
+  short, honest, non-browser UA.
+
+See docs/RUNBOOK.md for the raw evidence.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+# The configs are shipped inside the package so an installed copy works, and
+# the repository copy is used when running from a checkout.
+CONFIG_DIR = Path(__file__).resolve().parent / "configs"
+if not CONFIG_DIR.is_dir():
+    CONFIG_DIR = REPO_ROOT / "configs"
 
 
 class Settings(BaseSettings):
-    # API Keys
-    WAQI_TOKEN: str = os.getenv("WAQI_TOKEN", "")
-    OPENAQ_API_KEY: str = os.getenv("OPENAQ_API_KEY", "")
-    DATA_GOV_IN_KEY: str = os.getenv("DATA_GOV_IN_KEY", "")
-    ORS_API_KEY: str = os.getenv("ORS_API_KEY", "")
-    CONTACT_EMAIL: str = os.getenv("CONTACT_EMAIL", "hackathon-geoai@example.com")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # App Settings
-    CACHE_DIR: str = os.getenv("CACHE_DIR", ".cache")
+    # --- API keys (optional; the assistant degrades gracefully without them) ---
+    # WAQI gives us a real monitoring station reading, which corrects the
+    # coarse air-quality grid. It is the only key the app reads.
+    WAQI_TOKEN: str = ""
+
+    # NOTE: the contact string ends up in the User-Agent. Overpass blocks any
+    # UA containing a placeholder domain ("example.com"): it answers 403 on
+    # overpass.openstreetmap.fr and 406 on the .de mirrors. Use a real
+    # contact (email or repository URL) or leave it empty.
+    CONTACT_EMAIL: str = os.getenv("CONTACT_EMAIL", "")
+    REPO_URL: str = os.getenv("REPO_URL", "https://github.com/DRK28122006/GeoAI")
+
+    # --- App settings ---
+    CACHE_DIR: str = os.getenv("CACHE_DIR", str(REPO_ROOT / ".cache"))
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    TIMEZONE: str = os.getenv("TIMEZONE", "Asia/Kolkata")
+    # The whole request has to finish. Past this the caller is told the
+    # service is busy, which is better than a client timeout with no answer.
+    REQUEST_DEADLINE_S: float = float(os.getenv("REQUEST_DEADLINE_S", "90"))
+    # The geocoding and the venue lookup are the two slow stages.
+    GEOCODE_DEADLINE_S: float = float(os.getenv("GEOCODE_DEADLINE_S", "20"))
+    VENUE_DEADLINE_S: float = float(os.getenv("VENUE_DEADLINE_S", "25"))
+    # How long a request may wait for the model before the answer is
+    # produced without it.
+    MODEL_WAIT_S: float = float(os.getenv("MODEL_WAIT_S", "60"))
+    PORT: int = int(os.getenv("PORT", "7860"))
+    # The model is the bottleneck, so only a couple of requests may be in
+    # flight at once. More than that and the queue is longer than the
+    # client's patience.
+    MAX_IN_FLIGHT: int = int(os.getenv("MAX_IN_FLIGHT", "2"))
 
-    # Overpass Configuration
+    # --- SLM ---
+    SLM_MODEL_PATH: str = os.getenv(
+        "SLM_MODEL_PATH", str(REPO_ROOT / "models" / "Qwen3-1.7B-Q4_K_M.gguf")
+    )
+    SLM_BASE_MODEL: str = os.getenv("SLM_BASE_MODEL", "Qwen/Qwen3-1.7B")
+    SLM_N_CTX: int = int(os.getenv("SLM_N_CTX", "4096"))
+    SLM_N_THREADS: int = int(os.getenv("SLM_N_THREADS", "4"))
+    SLM_N_BATCH: int = int(os.getenv("SLM_N_BATCH", "256"))
+    # Load the model at process start instead of on the first request.
+    SLM_EAGER_LOAD: bool = os.getenv("SLM_EAGER_LOAD", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    # "inprocess" (llama-cpp-python in the API process) or "server" (llama-server HTTP)
+    SLM_BACKEND: str = os.getenv("SLM_BACKEND", "inprocess")
+    SLM_SERVER_URL: str = os.getenv("SLM_SERVER_URL", "http://127.0.0.1:8080")
+
+    # --- Networking ---
+    DEFAULT_TIMEOUT: float = float(os.getenv("DEFAULT_TIMEOUT", "12.0"))
+    OVERPASS_TIMEOUT: float = float(os.getenv("OVERPASS_TIMEOUT", "25.0"))
+    MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "2"))
+    # The whole live-data stage gets this long. Past it the answer is built
+    # from whatever arrived, with a limitation note.
+    CONTEXT_DEADLINE_S: float = float(os.getenv("CONTEXT_DEADLINE_S", "40"))
+
+    # --- Cache TTLs (seconds) ---
+    # Bump this when a source changes shape, so stale entries are not reused.
+    CACHE_VERSION: str = os.getenv("CACHE_VERSION", "v3")
+    TTL_GEOCODE: int = 30 * 24 * 3600
+    # The map does not change: roads, venues, industrial areas and water
+    # bodies are static OpenStreetMap geometry. What varies with the hour -
+    # the wind and the traffic multiplier - is computed in the engine, not
+    # fetched. So the map data can be cached for a day, and a second
+    # question about the same area is almost instant.
+    TTL_OVERPASS: int = 24 * 3600
+    TTL_VENUES: int = 24 * 3600
+    TTL_WEATHER_FORECAST: int = 30 * 60
+    TTL_AQ_FORECAST: int = 30 * 60
+    TTL_ROUTING: int = 15 * 60
+    TTL_DAYLIGHT: int = 6 * 3600
+    TTL_ELEVATION: int = 30 * 24 * 3600
+
+    # --- Overpass mirrors (first healthy one wins) ---
+    # overpass-api.de and its lz4/z siblings are often at capacity and answer
+    # 502 quickly; the .fr instance is the fast one but whitelists UAs.
     OVERPASS_MIRRORS: list[str] = [
+        "https://overpass.openstreetmap.fr/api/interpreter",
+        "https://z.overpass-api.de/api/interpreter",
+        "https://lz4.overpass-api.de/api/interpreter",
         "https://overpass-api.de/api/interpreter",
-        "https://overpass.kumi.systems/api/interpreter",
-        "https://overpass.private.coffee/api/interpreter"
     ]
+    # Total budget for one Overpass round trip before we give up and answer
+    # with a limitation instead of hanging the request. The hazard query asks
+    # for roads, industry, water and green cover in one union, and the public
+    # mirror regularly needs 18-25 s for it. A budget below that turns a slow
+    # answer into a partial one, so it is set above the measured time and the
+    # result is cached for the next request in the same area.
+    OVERPASS_BUDGET_S: float = float(os.getenv("OVERPASS_BUDGET_S", "30"))
 
-    # Timeouts and TTLs
-    DEFAULT_TIMEOUT: float = 10.0
-    TTL_GEOCODE: int = 30 * 24 * 3600  # 30 days
-    TTL_OVERPASS: int = 24 * 3600       # 24 hours
-    TTL_WEATHER_FORECAST: int = 30 * 60 # 30 mins
-    TTL_AQ_FORECAST: int = 30 * 60      # 30 mins
-    TTL_STATION_OBS: int = 15 * 60       # 15 mins
-    TTL_ROUTING: int = 15 * 60          # 15 mins
+    # --- Geofabrik (regional OSM extracts, queried locally) ---
+    # When enabled, the assistant downloads the Geofabrik zone extract that
+    # contains the user's location once, caches it on disk, and queries it
+    # locally instead of going through the Overpass mirrors. Overpass stays
+    # as the fallback when the extract cannot be fetched or parsed.
+    #
+    # OFF by default. The local extract is a lot faster than Overpass, but
+    # the first request for a zone has to fetch a 100-560 MB file, and that
+    # fetch cannot be guaranteed to have finished before a demo. So the
+    # feature stays behind the flag and the assistant answers from Overpass
+    # until somebody switches it on.
+    #
+    # To use it: set GEOFABRIK_ENABLED=true and let the container run for a
+    # while before the demo. The first request for a zone starts the
+    # download in the background, and the requests after that are answered
+    # from the local file. No request ever waits for the download.
+    GEOFABRIK_ENABLED: bool = os.getenv("GEOFABRIK_ENABLED", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    TTL_GEOFABRIK: int = 7 * 24 * 3600
+    # The largest extract we are willing to load. The zones are 105-533 MB
+    # and the container has a 3 GB memory limit, so a zone over this size is
+    # skipped and its region is answered from Overpass. At 300 MB the
+    # southern (533 MB) and central (336 MB) zones are skipped.
+    GEOFABRIK_MAX_MB: float = float(os.getenv("GEOFABRIK_MAX_MB", "300"))
+    # How long a request may wait for a local extract that is not ready
+    # yet. The request never waits for the download itself: it answers from
+    # Overpass and lets the download finish in the background.
+    GEOFABRIK_REQUEST_TIMEOUT_S: float = float(
+        os.getenv("GEOFABRIK_REQUEST_TIMEOUT_S", "3")
+    )
+    # The budget for one local read of the extract. A local read is only
+    # worth it when it is faster than the Overpass fallback, so it gets a
+    # smaller budget than the whole venue stage: a request still has to
+    # fit in REQUEST_DEADLINE_S together with the Overpass answer.
+    GEOFABRIK_QUERY_TIMEOUT_S: float = float(
+        os.getenv("GEOFABRIK_QUERY_TIMEOUT_S", "12")
+    )
+    # The budget for one background download. It is generous, because the
+    # file is 100-500 MB, and it does not delay any request.
+    GEOFABRIK_DOWNLOAD_TIMEOUT_S: float = float(
+        os.getenv("GEOFABRIK_DOWNLOAD_TIMEOUT_S", "1800")
+    )
+    # The free memory (in MB) that has to be left in the container before an
+    # extract is parsed. The container is capped at 3 GB and the model takes
+    # a good part of it.
+    GEOFABRIK_MIN_FREE_MB: float = float(os.getenv("GEOFABRIK_MIN_FREE_MB", "768"))
 
     @property
     def user_agent(self) -> str:
-        return f"GeoAI-Outdoor-Assistant ({self.CONTACT_EMAIL})"
+        """Short, honest UA for Overpass and the other open APIs."""
+        contact = self.CONTACT_EMAIL or self.REPO_URL
+        return f"GeoAI-Hackathon/1.0 ({contact})"
+
+    @property
+    def browser_user_agent(self) -> str:
+        """Nominatim only answers a browser-shaped UA that carries a contact."""
+        contact = self.CONTACT_EMAIL or self.REPO_URL
+        return f"Mozilla/5.0 (compatible; GeoAI-Hackathon/1.0; +{contact})"
+
+    def user_agent_for(self, source: str) -> str:
+        if source == "geocode":
+            return self.browser_user_agent
+        return self.user_agent
+
 
 settings = Settings()
+
+# The activity and profile configuration is read by the engine, the sources and
+# the pipeline. It is loaded once and cached, so a request does not re-read
+# four YAML files.
+_CONFIG_CACHE: dict[str, dict] = {}
+
+
+def load_config(name: str) -> dict:
+    """Read one of the YAML files in app/configs, once."""
+    if name not in _CONFIG_CACHE:
+        import yaml
+
+        path = CONFIG_DIR / f"{name}.yaml"
+        with open(path, "r", encoding="utf-8") as handle:
+            _CONFIG_CACHE[name] = yaml.safe_load(handle) or {}
+    return _CONFIG_CACHE[name]

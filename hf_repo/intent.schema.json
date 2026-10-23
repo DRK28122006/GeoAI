@@ -1,0 +1,73 @@
+{
+  "type": "object",
+  "properties": {
+    "activity": {
+      "type": "string",
+      "enum": [
+        "running",
+        "cycling",
+        "golf",
+        "cricket",
+        "football",
+        "tennis",
+        "hiking",
+        "picnic",
+        "event",
+        "photography",
+        "other"
+      ]
+    },
+    "location": {
+      "type": "string"
+    },
+    "day": {
+      "type": "string",
+      "enum": [
+        "today",
+        "tomorrow",
+        "day_after",
+        "weekend",
+        "next_weekend",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "none"
+      ]
+    },
+    "part_of_day": {
+      "type": "string",
+      "enum": [
+        "early_morning",
+        "morning",
+        "afternoon",
+        "evening",
+        "night",
+        "none"
+      ]
+    },
+    "profile": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "asthma",
+          "senior",
+          "child",
+          "pregnancy",
+          "none"
+        ]
+      }
+    }
+  },
+  "required": [
+    "activity",
+    "location",
+    "day",
+    "part_of_day",
+    "profile"
+  ]
+}

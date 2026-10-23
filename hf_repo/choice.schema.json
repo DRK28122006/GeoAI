@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "properties": {
+    "slot_id": {
+      "type": "string",
+      "maxLength": 24
+    },
+    "headline": {
+      "type": "string",
+      "maxLength": 140
+    }
+  },
+  "required": [
+    "slot_id",
+    "headline"
+  ]
+}
