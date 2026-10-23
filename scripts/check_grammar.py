@@ -16,7 +16,7 @@ import time
 
 from llama_cpp import Llama, LlamaGrammar
 
-from app.slm import CHOICE_SCHEMA, CHOOSER_SYSTEM, INTENT_SCHEMA, PARSER_SYSTEM
+from app.slm import CHOICE_SCHEMA, INTENT_SCHEMA, SHARED_SYSTEM
 
 MODEL = "models/Qwen3-1.7B-Q4_K_M.gguf"
 
@@ -94,8 +94,9 @@ def main() -> int:
             started = time.perf_counter()
             out = llm.create_completion(
                 prompt=chatml(
-                    PARSER_SYSTEM,
-                    f"Today is 2026-10-21 21:30 (IST). Question: {question}",
+                    SHARED_SYSTEM,
+                    f"TASK: parse\nToday is 2026-10-21 21:30 (IST). "
+                    f"Question: {question}",
                     think,
                 ),
                 grammar=grammar,
@@ -125,8 +126,8 @@ def main() -> int:
     for _ in range(3):
         out = llm.create_completion(
             prompt=chatml(
-                CHOOSER_SYSTEM,
-                "Options:\n"
+                SHARED_SYSTEM,
+                "TASK: choose\nOptions:\n"
                 + "\n".join(
                     f"{o['slot_id']} | {o['place']} | {o['time']} | score {o['score']} | "
                     f"{o['apparent_temp_c']}C | AQI {o['us_aqi']} | rain {o['precip_prob']}%"

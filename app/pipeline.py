@@ -391,8 +391,12 @@ class Pipeline:
         stage: dict[str, float] = {}
         t0 = time.perf_counter()
         try:
+            # The hour is enough context for "today", "tonight" or "tomorrow",
+            # and rounding to it means the same question asked again within
+            # the hour hits the parser cache instead of the model. The exact
+            # time is resolved later by the planner from the real clock.
             parsed = await self._run_blocking(
-                self.slm.parse_intent, question, now.strftime("%Y-%m-%d %H:%M")
+                self.slm.parse_intent, question, now.strftime("%Y-%m-%d %H:00")
             )
             parse_source = "slm"
         except (SLMUnavailable, Exception) as exc:  # noqa: BLE001

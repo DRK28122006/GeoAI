@@ -79,11 +79,11 @@ class Settings(BaseSettings):
 
     # --- Networking ---
     DEFAULT_TIMEOUT: float = float(os.getenv("DEFAULT_TIMEOUT", "12.0"))
-    OVERPASS_TIMEOUT: float = float(os.getenv("OVERPASS_TIMEOUT", "18.0"))
+    OVERPASS_TIMEOUT: float = float(os.getenv("OVERPASS_TIMEOUT", "25.0"))
     MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "2"))
     # The whole live-data stage gets this long. Past it the answer is built
     # from whatever arrived, with a limitation note.
-    CONTEXT_DEADLINE_S: float = float(os.getenv("CONTEXT_DEADLINE_S", "30"))
+    CONTEXT_DEADLINE_S: float = float(os.getenv("CONTEXT_DEADLINE_S", "40"))
 
     # --- Cache TTLs (seconds) ---
     # Bump this when a source changes shape, so stale entries are not reused.
@@ -112,8 +112,12 @@ class Settings(BaseSettings):
         "https://overpass-api.de/api/interpreter",
     ]
     # Total budget for one Overpass round trip before we give up and answer
-    # with a limitation instead of hanging the request.
-    OVERPASS_BUDGET_S: float = float(os.getenv("OVERPASS_BUDGET_S", "15"))
+    # with a limitation instead of hanging the request. The hazard query asks
+    # for roads, industry, water and green cover in one union, and the public
+    # mirror regularly needs 18-25 s for it. A budget below that turns a slow
+    # answer into a partial one, so it is set above the measured time and the
+    # result is cached for the next request in the same area.
+    OVERPASS_BUDGET_S: float = float(os.getenv("OVERPASS_BUDGET_S", "30"))
 
     # --- Geofabrik (regional OSM extracts, queried locally) ---
     # When enabled, the assistant downloads the Geofabrik zone extract that

@@ -57,6 +57,10 @@ class OverpassSource(BaseSource):
     # Shared across requests: when the mirrors start refusing us, we stop
     # asking for a while instead of burning the user's time on every question.
     _cooldown_until: float = 0.0
+    # The mirror that answered last, tried first on the next query. Without
+    # this a query that starts on a failing mirror spends the whole budget
+    # there before it reaches the healthy one.
+    _preferred: str | None = None
     _consecutive_failures: int = 0
 
     def __init__(self):
@@ -136,6 +140,11 @@ class OverpassSource(BaseSource):
         budget = budget if budget is not None else settings.OVERPASS_BUDGET_S
         deadline = time.monotonic() + budget
         mirrors = settings.OVERPASS_MIRRORS[start:] + settings.OVERPASS_MIRRORS[:start]
+        preferred = OverpassSource._preferred
+        if preferred and preferred in mirrors:
+            # A healthy mirror answers in a couple of seconds; a dead one can
+            # eat the whole budget. Put the one that answered last first.
+            mirrors = [preferred] + [m for m in mirrors if m != preferred]
         for mirror in mirrors:
             remaining = deadline - time.monotonic()
             if remaining <= 1:
@@ -145,6 +154,7 @@ class OverpassSource(BaseSource):
                 mirror, query, timeout=min(settings.OVERPASS_TIMEOUT, remaining)
             )
             if data is not None:
+                OverpassSource._preferred = mirror
                 OverpassSource._consecutive_failures = 0
                 OverpassSource._cooldown_until = 0.0
                 return data

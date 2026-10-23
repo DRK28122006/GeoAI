@@ -113,7 +113,7 @@ Rules:
 
 Use null or empty when the question does not say. Never invent a place."""
 
-CHOOSER_SYSTEM = """You are the GeoAI Outdoor Assistant.
+CHOOSER_INSTRUCTIONS = """You are the GeoAI Outdoor Assistant.
 Pick one option and answer in this exact JSON shape:
 {"slot_id": "<the slot id from the options>", "headline": "<one sentence naming the place and the time>"}
 Rules:
@@ -123,6 +123,24 @@ Rules:
 
 Example:
 {"slot_id": "S1-102317", "headline": "Go to ABC Farms around 17:00 on Fri 23 Oct."}"""
+
+# Both calls of a request use this one system prompt.
+#
+# llama.cpp keeps the KV cache between two calls in the same process and
+# re-evaluates only the tokens that follow the longest shared prefix. A
+# request makes two calls (parse, then choose). With two different system
+# prompts neither call shares a prefix with the one before it, so both pay
+# the full prompt evaluation every time: measured on the target CPU, a
+# 355-token system prompt costs about 4 s cold and about 0.2 s when it is
+# already in the cache. One shared prompt puts that cost on the first call
+# of the process only; after that a call evaluates its user turn and nothing
+# else, which takes roughly 2.5 s off every request. The task marker at the
+# top of the user turn selects the job, and the grammar still constrains
+# each call to its own output schema.
+SHARED_SYSTEM = PARSER_SYSTEM + "\n\n" + CHOOSER_INSTRUCTIONS
+
+# Kept as a name because the prompt contract script imports it.
+CHOOSER_SYSTEM = SHARED_SYSTEM
 
 
 def _split_chatml(prompt: str) -> tuple[str, str]:
@@ -374,8 +392,8 @@ class SLM:
 
     # ------------------------------------------------------------------ API
     def parse_intent(self, question: str, now_iso: str) -> dict[str, Any]:
-        user = f"Today is {now_iso} (IST). Question: {question}"
-        return self._complete_json(PARSER_SYSTEM, user, INTENT_SCHEMA, max_tokens=96)
+        user = f"TASK: parse\nToday is {now_iso} (IST). Question: {question}"
+        return self._complete_json(SHARED_SYSTEM, user, INTENT_SCHEMA, max_tokens=96)
 
     def choose(self, question: str, options: list[dict[str, Any]]) -> dict[str, Any]:
         def number(value, digits=0):
@@ -393,8 +411,8 @@ class SLM:
         )
         # The prompt is kept small on purpose: every token costs time on a
         # CPU, and the facts the model needs are all in the table.
-        user = f"Options:\n{table}\n\nQuestion: {question[:200]}"
-        return self._complete_json(CHOOSER_SYSTEM, user, CHOICE_SCHEMA, max_tokens=80)
+        user = f"TASK: choose\nOptions:\n{table}\n\nQuestion: {question[:200]}"
+        return self._complete_json(SHARED_SYSTEM, user, CHOICE_SCHEMA, max_tokens=80)
 
 
 slm = SLM()
