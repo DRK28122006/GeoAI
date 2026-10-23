@@ -95,8 +95,17 @@ class AQSource(BaseSource):
             raise RuntimeError(body.get("data", "WAQI error"))
 
         data = body.get("data") or {}
-        station = data.get("station") or {}
-        obs_pm25 = (data.get("iaqi") or {}).get("pm25")
+        city = data.get("city") or {}
+        station = {
+            "name": city.get("name"),
+            "uid": data.get("idx"),
+            "geo": city.get("geo") or [None, None],
+        }
+        raw_pm25 = (data.get("iaqi") or {}).get("pm25")
+        # WAQI returns {"v": <number>} here, not a bare number.
+        if isinstance(raw_pm25, dict):
+            raw_pm25 = raw_pm25.get("v")
+        obs_pm25 = raw_pm25
         if obs_pm25 is None:
             raise RuntimeError("station has no PM2.5 reading")
 
