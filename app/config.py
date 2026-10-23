@@ -120,12 +120,50 @@ class Settings(BaseSettings):
     # contains the user's location once, caches it on disk, and queries it
     # locally instead of going through the Overpass mirrors. Overpass stays
     # as the fallback when the extract cannot be fetched or parsed.
-    GEOFABRIK_ENABLED: bool = os.getenv("GEOFABRIK_ENABLED", "true").lower() in {
+    #
+    # OFF by default. The local extract is a lot faster than Overpass, but
+    # the first request for a zone has to fetch a 100-560 MB file, and that
+    # fetch cannot be guaranteed to have finished before a demo. So the
+    # feature stays behind the flag and the assistant answers from Overpass
+    # until somebody switches it on.
+    #
+    # To use it: set GEOFABRIK_ENABLED=true and let the container run for a
+    # while before the demo. The first request for a zone starts the
+    # download in the background, and the requests after that are answered
+    # from the local file. No request ever waits for the download.
+    GEOFABRIK_ENABLED: bool = os.getenv("GEOFABRIK_ENABLED", "false").lower() in {
         "1",
         "true",
         "yes",
     }
     TTL_GEOFABRIK: int = 7 * 24 * 3600
+    # The largest extract we are willing to load. The zones are 105-533 MB
+    # and the container has a 3 GB memory limit, so a zone over this size is
+    # skipped and its region is answered from Overpass. At 300 MB the
+    # southern (533 MB) and central (336 MB) zones are skipped.
+    GEOFABRIK_MAX_MB: float = float(os.getenv("GEOFABRIK_MAX_MB", "300"))
+    # How long a request may wait for a local extract that is not ready
+    # yet. The request never waits for the download itself: it answers from
+    # Overpass and lets the download finish in the background.
+    GEOFABRIK_REQUEST_TIMEOUT_S: float = float(
+        os.getenv("GEOFABRIK_REQUEST_TIMEOUT_S", "3")
+    )
+    # The budget for one local read of the extract. A local read is only
+    # worth it when it is faster than the Overpass fallback, so it gets a
+    # smaller budget than the whole venue stage: a request still has to
+    # fit in REQUEST_DEADLINE_S together with the Overpass answer.
+    GEOFABRIK_QUERY_TIMEOUT_S: float = float(
+        os.getenv("GEOFABRIK_QUERY_TIMEOUT_S", "12")
+    )
+    # The budget for one background download. It is generous, because the
+    # file is 100-500 MB, and it does not delay any request.
+    GEOFABRIK_DOWNLOAD_TIMEOUT_S: float = float(
+        os.getenv("GEOFABRIK_DOWNLOAD_TIMEOUT_S", "1800")
+    )
+    # The free memory (in MB) that has to be left in the container before an
+    # extract is parsed. The container is capped at 3 GB and the model takes
+    # a good part of it.
+    GEOFABRIK_MIN_FREE_MB: float = float(os.getenv("GEOFABRIK_MIN_FREE_MB", "768"))
 
     @property
     def user_agent(self) -> str:

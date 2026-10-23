@@ -1,280 +1,454 @@
 # GeoAI Outdoor Assistant
 
-An AI assistant that answers free-form questions like *"I have mild asthma, where's good
-for a morning walk near Powai in the next two days?"* with a **specific place and time**,
-practical advice, and evidence for every claim.
+An AI assistant, powered by a small language model, that tells a person
+**where and when to go outdoors** and what to take, what to watch out for and
+when to stay home.
 
-Everything is grounded in **live** data fetched at query time: OpenStreetMap (venues,
-roads, industry, water, green cover), Open-Meteo (weather + air quality), WAQI
-(station ground truth), OSRM (travel time) and Open-Meteo/Astral (sunrise, sunset).
-The language model is a **locally hosted 1.7B open-weights model** (Qwen3-1.7B, Apache-2.0)
-run through llama.cpp. No hosted large model is called at request time.
+```
+"I have mild asthma, where's good for a morning walk near JP Nagar tomorrow?"
+
+Go to B R Ambedkar Park around 10:00 on Fri 23 Oct.
+- E_WEATHER: feels like 28C with 16% chance of rain
+- E_AQ: US-AQI 42 locally
+- E_HAZARDS: local exposure index 1.04
+- E_ROUTES: about 11 min away
+Carry: Water bottle, Your inhaler.
+Watch out for: Limits were tightened because of: asthma.
+```
+
+Every number in that answer came from a live API call, and every one of them
+is traceable in the response's `proof` block.
+
+This is a submission for the **GeoAI Hackathon at CSRE, IIT Bombay**
+(deadline 24 October 2026, 11:59 PM IST). The rulebook the submission is
+judged against is the one the organisers published with the problem
+statement; the last section of this file maps it point by point.
+
+---
+
+## The problem, and the idea
+
+Weather apps tell you the weather. They do not tell you **which nearby place,
+at which hour, for this particular person** is the right answer. The rulebook's
+own example:
+
+> A ground that lies downwind of an expressway at 8 AM may be pleasant by
+> evening once the wind shifts, and a venue forty minutes away at rush hour
+> may not be worth the trip.
+
+So the assistant reasons over three things at once: **place**, **hour** and
+**person**.
+
+### The division of labour
+
+This is the core design decision, and everything else follows from it.
+
+| | Who | What |
+| --- | --- | --- |
+| Understand the question | the model | "running", "JP Nagar", "morning", "asthma" |
+| Find the facts | live APIs | venues, roads, hourly weather, air quality, travel times, sunrise |
+| **Do the reasoning** | **deterministic code** | which venue, which hour, and why |
+| Write it up | the model | one sentence |
+| Check it | deterministic code | every number, time, place name and citation |
+
+The model never computes anything and never recalls a fact. It receives an
+already-scored table of options and may only pick from it. That is deliberate:
+a 1.7B model asked to reason about wind and traffic will eventually state a
+number that was never fetched, which the rulebook forbids. A rule-based
+verifier re-checks the model's wording against the data that was fetched, and
+if anything fails the answer is produced by code instead.
+
+The result is that the model contributes exactly the two things a small model
+is good at, and the two things it is bad at are handled by code.
+
+---
+
+## Architecture
+
+```
+question
+  |
+  |  [1] SLM call 1 - intent parser, grammar-constrained JSON
+  |      { activity, location, day, part_of_day, profile }
+  |      the question's own wording overrides the model for the
+  |      activity, the place and the profile
+  |
+  |  [2] gate - code
+  |      no location -> ask one question.  out of scope -> decline.
+  |
+  |  [3] live data - six APIs, in parallel
+  |      Nominatim / Open-Meteo   -> where is it, and when
+  |      Overpass                 -> the venues, and the roads,
+  |                                  industry, water and green cover
+  |      Open-Meteo forecast      -> hourly weather, per venue
+  |      Open-Meteo CAMS          -> hourly air quality, per venue
+  |      OSRM                     -> how far every venue is
+  |      Open-Meteo daily         -> sunrise and sunset
+  |
+  |  [4] exposure engine - deterministic, no model
+  |      every venue against every hour of the window:
+  |      downwind exposure, local PM2.5, hard limits, a 0-100 score
+  |
+  |  [5] SLM call 2 - chooser
+  |      input : the top three options as a small table
+  |      output: { slot_id, headline }
+  |
+  |  [6] verifier - code
+  |      every number, clock time, place name and evidence citation
+  |      in the model's sentence is checked against the fetched data
+  |
+  +--> answer + proof + GeoJSON + evidence + limitations
+```
+
+```
+app/
+  main.py             FastAPI: /ask, /live, /ready, /health, /sources, /context
+  config.py           settings, TTLs, mirrors, per-source User-Agents
+  planner.py          "tomorrow evening" -> concrete hours in IST
+  slm.py              the local model: grammar-constrained JSON, thinking off
+  context.py          gather_context(): live data, evidence, degradation
+  exposure_engine.py  deterministic scoring of every venue against every hour
+  verifier.py         grounding checks and the fact table
+  pipeline.py         orchestration and the response contract
+  sources/            geocode, overpass, weather, airquality, routing,
+                      daylight, elevation, geofabrik
+  configs/            activities, profiles, hazards, weights
+tests/                77 unit tests
+scripts/              eval_queries.py, check_grammar.py, build_wheel.sh
+docs/                 API.md for the frontend, RUNBOOK.md, PRD.md, TODO.md
+hf_repo/              the model card, the prompt contract, the upload script
+```
+
+---
+
+## The exposure engine
+
+This is where "place and hour together" actually happens. For a venue `v` at
+an hour `t`:
+
+```
+E(v,t) = sum over nearby features h of
+           class_weight(h) * exp(-distance(v,h) / length_scale(h))   decay
+         * max(0, cos(bearing(h->v) - wind_towards(t)))              alignment
+         * calm_factor(t)                                            calm air pools
+         * traffic_multiplier(h, t)                                  hour of the day
+
+PM2.5_local(v,t) = PM2.5_forecast(t) * station_bias * (1 + beta * E(v,t))
+```
+
+* `wind_towards(t)` is the live wind direction for that hour, turned around.
+  A venue only picks up the exposure of a road that is **downwind** of it.
+* Roads decay over 400 to 800 m depending on their class, industry over 2 km.
+* Water and green cover within a few hundred metres **reduce** the term.
+* `station_bias` corrects the coarse forecast grid with a nearby monitoring
+  station, when one is configured.
+
+The score that comes out of that is a weighted sum of comfort, air quality,
+wind and rain, daylight and travel time, with a penalty for the residual
+exposure. Each part is returned in the breakdown, so the explanation can
+quote it.
+
+**Hard limits** disqualify a slot outright: thunderstorm, rain above the
+activity's limit, apparent heat above the person's limit, PM2.5 or ozone above
+the limit, darkness in a venue with no lighting, and a trip that is too long
+for the radius that was asked for.
+
+**Personal profiles** tighten those limits: asthma, senior, child, pregnancy,
+and injury or recovery. An injury is different on purpose: it does not only
+tighten the limits, it rules the activity out, and the answer says plainly
+that cycling is not advisable with a fractured foot, points at the doctor's
+advice, and only then names the calmest nearby spot for when the person is
+cleared.
+
+This is a unit test, not a claim. `test_wind_direction_changes_the_ranking`
+scores the same venue with an easterly and a westerly wind and asserts the
+ranking flips.
 
 ---
 
 ## Quick start
 
+### Locally
+
 ```bash
-# 1. Python 3.12 environment (the llama-cpp-python wheels are built for 3.12)
+cd ~/Projects/GEOai/deepesh-repo
+
+# a Python 3.12 environment. The llama-cpp-python wheels published for
+# linux are musl builds and cannot be loaded on glibc, so it is compiled.
 uv venv --python 3.12 .venv
 source .venv/bin/activate
-
-# 2. Install the app. On Arch the prebuilt wheel is a musl build, so build from source:
 uv pip install cmake ninja
-CMAKE_ARGS="-DGGML_NATIVE=ON -DLLAMA_CURL=OFF" \
-  uv pip install --no-binary llama-cpp-python "llama-cpp-python==0.3.19"
+CMAKE_ARGS="-DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_F16C=ON \
+           -DGGML_FMA=ON -DLLAMA_CURL=OFF" \
+    pip install --no-binary llama-cpp-python "llama-cpp-python==0.3.19"
 uv pip install -e ".[dev]"
 
-# 3. Model weights (1.1 GB)
+# the model, 1.1 GB
 mkdir -p models
 curl -L -o models/Qwen3-1.7B-Q4_K_M.gguf \
   "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf"
 
-# 4. Run
 uvicorn app.main:app --host 0.0.0.0 --port 7860
 ```
 
-```bash
-curl -s -X POST localhost:7860/ask -H 'Content-Type: application/json' \
-  -d '{"question":"Where can I go running tomorrow evening near Koregaon Park in Pune?"}'
-```
+`GGML_NATIVE=OFF` is deliberate. A build compiled for the build machine's CPU
+dies with an illegal instruction on any other one, so the image uses a
+baseline instruction set instead.
 
-**Live API:** `https://<your-host>/ask` — set this to the hosted endpoint once it
-is deployed.
-**Model on Hugging Face:** `https://huggingface.co/<your-org>/geoai-outdoor-assistant`
+The model is loaded at start-up, not on the first request, so the first
+caller of the judging window does not pay for it.
 
-Then:
+### With Docker
 
 ```bash
+docker compose up -d --build
+curl -s localhost:7860/ready | python3 -m json.tool
 curl -s -X POST localhost:7860/ask -H 'Content-Type: application/json' \
-  -d '{"question":"Where can I go running tomorrow evening near Koregaon Park in Pune?"}'
+  -d '{"question":"Where can I go running tomorrow evening near Koregaon Park?"}'
 ```
 
-The model is loaded **at start-up**, not on the first request, so the first caller of
-the judging window does not pay for it.
+The image is built in two stages, so the compilers do not ship with the
+service. The model weights are baked in, so the container serves answers
+without needing the network to boot. It runs as a non-root user and waits for
+the in-flight requests before it stops.
+
+If the package mirrors are slow, build the wheel on the host first and the
+image will use it:
+
+```bash
+./scripts/build_wheel.sh
+docker compose up -d --build
+```
 
 ---
 
-## How it works
+## The API
 
-```
-question
-  -> [SLM call 1] intent parser ......... grammar-constrained JSON (activity, place, profile)
-  -> gate .................. clarify / decline / proceed
-  -> geocode ............... Nominatim -> Open-Meteo -> Photon
-  -> venues ................ Overpass (tag search) + Nominatim (POI search), merged
-  -> hazards ............... Overpass: roads, industry, power, landfill, water, green
-  -> live data ............. Open-Meteo weather + air quality, OSRM travel, daylight
-  -> exposure engine ....... scores every (venue x hour): wind alignment, decay, calm
-                             factor, traffic proxy, local PM2.5, hard constraints
-  -> [SLM call 2] chooser ... picks a slot, writes why / carry / watch-for
-  -> verifier .............. every number, time and place must exist in the bundle
-  -> response .............. text + JSON + GeoJSON + evidence + limitations
-```
-
-**The model never computes and never invents.** It receives an already-scored table and
-may only choose from it. A rule-based verifier re-checks every number, clock time and
-place name in the model's wording against the fetched data; on failure the model is
-asked once more, and if that fails the answer is produced by a deterministic template
-built from the same data. This is what makes "support every claim with the live data it
-actually used" true rather than aspirational.
-
-### The part that makes place and time matter
-
-The exposure term for a venue at an hour is:
-
-```
-E(v,t) = sum over hazard features h of
-         class_weight(h) * exp(-distance(v,h) / length_scale(h))    # spatial decay
-         * max(0, cos(bearing(h->v) - wind_towards(t)))            # downwind alignment
-         * calm_factor(t)                                          # calm air pools pollution
-         * traffic_multiplier(h, t)                                # time-of-day proxy
-
-PM2.5_local(v,t) = PM2.5_forecast(t) * station_bias * (1 + beta * E(v,t))
-```
-
-so a park that lies downwind of an expressway at 08:00 can score well at 18:00 when the
-wind has shifted and the rush-hour multiplier drops. Green cover and water bodies near
-the venue reduce the term. Every slot also carries its score breakdown, so the
-explanation can cite it.
-
----
-
-## API
+Full details, with a request, a response and a JavaScript example, are in
+[`docs/API.md`](docs/API.md).
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/ask` | the main endpoint - free-form question in, grounded answer out |
-| GET | `/live` | liveness - always 200 while the process is up. The container health check uses this |
-| GET | `/ready` | readiness - 503 when the model is not loaded. A load balancer wants this |
-| GET | `/health` | both of the above, for convenience |
-| GET | `/context` | debug: the evidence bundle and top slots without the SLM in the loop |
-| GET | `/sources` | every data source, its role and the attributions |
+| POST | `/ask` | the main endpoint: a question in, a grounded answer out |
+| GET | `/live` | liveness, always 200 while the process is up |
+| GET | `/ready` | readiness, 503 when the model is not loaded |
+| GET | `/health` | both of the above |
+| GET | `/sources` | every data source, its role and its licence |
+| GET | `/context` | the raw evidence bundle, for debugging |
 
-### Request
+The response carries the answer, the parsed intent, the recommendation with
+its score breakdown, alternatives, the hours to avoid with the reason for
+each, the practical advice, the evidence, a `proof` block, a GeoJSON feature
+collection for the map, the data timestamp, the sources and the limitations.
 
-```json
-{ "question": "string", "lat": null, "lon": null, "debug": false }
-```
-
-`lat`/`lon` are optional; when given they are used as the starting point for the
-travel-time calculation.
-
-### Response
-
-```json
-{
-  "status": "ok | needs_clarification | out_of_scope | partial",
-  "clarification_question": null,
-  "parsed":      { "activity": "", "location": "", "radius_km": 5.0, "window": {}, "profile": [], "assumptions": [] },
-  "recommendation": { "place": "", "time": "", "time_label": "", "score": 0,
-                      "why": [], "breakdown": {}, "weather": {}, "air": {}, "evidence": [] },
-  "alternatives": [ { "place": "", "time": "", "score": 0 } ],
-  "avoid":        [ { "window": "", "venue": "", "reason": "", "evidence": [] } ],
-  "advice":       { "carry": [], "watch_for": [], "note": [] },
-  "evidence":     { "E1": { "source": "", "value": "", "fetched_at": 0 } },
-  "map_geojson":  { "type": "FeatureCollection", "features": [] },
-  "data_as_of":   "",
-  "sources":      [ { "name": "", "role": "", "license": "" } ],
-  "limitations":  [],
-  "timings_ms":   {},
-  "answer":       "the same recommendation as readable text"
-}
-```
-
-`map_geojson` contains the origin, the recommended and alternative venues, and the
-nearest hazard lines, so a map can render the answer without another lookup. The road
-geometries are simplified and capped, so the whole response stays small.
+`status` is one of `ok`, `partial`, `needs_clarification`, `out_of_scope` or
+`busy`. The frontend should show a progress state: a question fetches live
+data from six services, scores every venue against every hour and then writes
+the answer, so it takes 20 to 40 seconds.
 
 ---
 
-## Activities
+## Configuration
 
-All ten required activities are supported, each with its own comfort band, wind
-sensitivity, rain tolerance, ventilation weight, daylight rules and OSM tag profile
-(`app/configs/activities.yaml`):
+Everything is an environment variable and every one has a working default.
+Copy `.env.example` to `.env` to set them.
 
-running, cycling, golf, cricket, football, tennis, hiking, picnic, outdoor event,
-outdoor photography.
-
-Personal profiles tighten the limits and change the advice
-(`app/configs/profiles.yaml`): asthma, senior, child, pregnancy, and **injury or
-recovery** (a fracture, a sprain, an operation). Every profile-adjusted answer says
-which limits were tightened and carries a "not medical advice" note.
-
-The injury profile is different on purpose. It does not only tighten limits: it rules
-the activity out. Ask about cycling with a fractured foot and the answer says plainly
-that cycling is not advisable, points at the doctor's advice, and then names the
-calmest nearby spot for when you are cleared. It never prescribes.
-
----
-
-## Data sources and attribution
-
-| Source | Used for | Licence / credit |
+| Variable | Default | What it does |
 | --- | --- | --- |
-| OpenStreetMap (Overpass API, Nominatim) | venues, roads, industry, water, green cover, geocoding | © OpenStreetMap contributors, ODbL |
-| Open-Meteo forecast | hourly weather | CC BY 4.0 |
-| Open-Meteo air quality (CAMS ENSEMBLE) | PM2.5, PM10, ozone, NO2, US-AQI | CC BY 4.0, Copernicus/ECMWF |
-| WAQI | nearest station PM2.5 for the grid bias factor | CC BY 4.0 |
-| OSRM (`router.project-osrm.org`) | travel time | BSD, demo server, fair use |
-| Astral / Open-Meteo daily | sunrise and sunset | MIT / CC BY 4.0 |
-
-**© OpenStreetMap contributors** must appear wherever OSM data is shown.
-
-### Known limitations (stated in every response)
-
-- The global air-quality grid is roughly 25-40 km wide outside Europe, so venues in one
-  city usually share a forecast value. The venue-to-venue difference comes from the
-  exposure engine, not from the API.
-- There is no live traffic feed. Travel time uses OSRM car routing and a documented
-  time-of-day traffic multiplier per road class.
-- A hazard's distance is measured to the closest point of its mapped geometry, but the
-  road class and traffic profile are coarse.
-- OSM coverage is uneven; in smaller towns there may be no mapped venues at all.
+| `WAQI_TOKEN` | empty | a nearby air-quality station for the grid correction. Without it the answer says so |
+| `CONTACT_EMAIL` | empty | goes in the OSM User-Agent. Do not use a placeholder domain: Overpass refuses one |
+| `SLM_MODEL_PATH` | `models/Qwen3-1.7B-Q4_K_M.gguf` | the weights to serve |
+| `SLM_N_THREADS` | 4 | the threads the model uses. Set it to the cores you have |
+| `SLM_N_CTX` | 4096 | the context window |
+| `MAX_IN_FLIGHT` | 2 | how many questions may be in flight. The model is the bottleneck |
+| `REQUEST_DEADLINE_S` | 90 | the ceiling for a whole request |
+| `CONTEXT_DEADLINE_S` | 30 | the ceiling for the live data stage |
+| `GEOFABRIK_ENABLED` | false | the local OpenStreetMap extract source. Off by default, see the limitations |
+| `LOG_LEVEL` | INFO | the log level |
 
 ---
 
-## Model
+## Data sources
+
+Every source is free and open, and everything is fetched live at query time.
+Nothing is bundled and no city data is pre-baked.
+
+| Source | Used for | Licence |
+| --- | --- | --- |
+| OpenStreetMap, via the Overpass API and Nominatim | venues, roads, industry, water, green cover, geocoding | © OpenStreetMap contributors, ODbL |
+| Open-Meteo forecast | hourly weather | CC BY 4.0 |
+| Open-Meteo air quality, CAMS ENSEMBLE | PM2.5, PM10, ozone, NO2, US-AQI | CC BY 4.0 |
+| WAQI | a nearby station reading, to correct the grid | CC BY 4.0 |
+| OSRM | travel time | BSD, the demo server is fair use |
+| Astral and Open-Meteo daily | sunrise and sunset | MIT and CC BY 4.0 |
+
+**© OpenStreetMap contributors** appears in every response, in `/sources` and
+in this file, as the rulebook requires.
+
+---
+
+## The model
 
 | | |
 | --- | --- |
-| Base model | **Qwen3-1.7B** (`Qwen/Qwen3-1.7B`), Apache-2.0, 2.03B parameters with embeddings - under the 3B limit |
-| Serving | `llama-cpp-python` 0.3.19, Q4_K_M GGUF, CPU (AVX-512), 4 threads |
-| Reasoning mode | non-thinking (an empty `<think>` block is pre-seeded in the assistant turn) |
-| Decoding | JSON schema compiled to a GBNF grammar, temperature 0.1 |
+| Base model | [`Qwen/Qwen3-1.7B`](https://huggingface.co/Qwen/Qwen3-1.7B) |
+| Licence | Apache-2.0 |
+| Parameters | 2.03B including embeddings, 1.72B without. Under the 3B limit |
+| Published as | [`som-doe2007/geoai-outdoor-assistant`](https://huggingface.co/som-doe2007/geoai-outdoor-assistant) |
+| Served by | llama.cpp through `llama-cpp-python`, Q4_K_M, CPU, four threads |
+| Speed here | 167 tokens per second prefill, 17 per second generation, 5 to 9 under the JSON grammar |
+| Fine-tuning | none. The base model is used unchanged, as the rulebook allows |
 
-The model is used for two narrow jobs - parsing the question and choosing/explaining
-from a pre-scored table - so the small model never has to memorise weather or geography.
-Fine-tuning is optional and was not required for the submission; the unmodified base
-model is used.
+The repository on the Hub holds the base weights, so it loads with the
+standard API:
 
-The Hugging Face repository for the deliverable is published separately (weights or
-LoRA adapter, model card, open licence) so that it loads with `from_pretrained(...)`.
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model = AutoModelForCausalLM.from_pretrained("som-doe2007/geoai-outdoor-assistant")
+tokenizer = AutoTokenizer.from_pretrained("som-doe2007/geoai-outdoor-assistant")
+```
+
+It also holds the GGUF that the service actually loads, the prompt contract
+and the two JSON schemas the model is constrained to, so the contract is
+inspectable rather than described.
+
+### Two details that matter
+
+**The grammar is always active.** The model is asked for JSON and the schema
+is compiled to a GBNF grammar, so the output is always parseable. Qwen3 emits
+a reasoning block by default, and with thinking enabled the grammar is not
+always enforced, which would make the answer unparseable. We disable
+thinking by pre-seeding an empty `<think></think>` block in the assistant
+turn, which is how the model's own template supports it.
+`scripts/check_grammar.py` checks this against the real model, and
+`tests/test_prompt_contract.py` checks the contract that makes it work.
+
+**The model is never the source of a fact.** The reasons, the advice and the
+avoid windows are composed in code from the fetched data. The model writes
+one sentence, and the verifier checks that sentence.
+
+---
+
+## Grounding
+
+The rulebook asks the assistant to support every claim with the live data it
+actually used, without inventing weather or places. That is enforced, not
+hoped for:
+
+1. The parser's output is **overruled by code** for the activity, the place
+   and the profile, because the question is the ground truth for those. A
+   model that invents a health condition cannot tighten anyone's limits.
+2. The chooser may only pick a `slot_id` from the table it was given.
+3. A **verifier** extracts every number, clock time, place name and
+   evidence citation from the model's wording and checks each against the
+   facts that were fetched, with a tolerance for rounding. A citation to
+   evidence that does not exist is rejected too.
+4. If anything fails, the model is asked once more. If it fails again, the
+   answer is produced by a deterministic template built from the same data,
+   and the response says which one it was in `answer_source`.
+
+The test suite contains the case that matters: with the network cut, the
+service **cannot answer at all**, because there is nothing to fall back on.
+Nothing is pre-baked.
+
+---
+
+## Activities and profiles
+
+All ten activities from the rulebook, each with its own comfort band, wind
+sensitivity, rain tolerance, ventilation weight, daylight rules and map
+selectors: running, cycling, golf, cricket, football, tennis, hiking, picnic,
+outdoor event and outdoor photography.
+
+Five personal profiles: asthma, senior, child, pregnancy and injury or
+recovery. Every profile-adjusted answer says which limits were tightened and
+carries a note that it is general guidance from open data, not medical
+advice.
+
+---
+
+## Tests
+
+```bash
+.venv/bin/pytest -q          # 77 passed
+.venv/bin/ruff check app tests scripts
+.venv/bin/python scripts/eval_queries.py --live    # the live question set
+.venv/bin/python scripts/check_grammar.py          # the grammar contract
+```
+
+The suite covers the planner, the geocoder, the exposure engine, the
+verifier, the API contract and the production behaviour. The engine tests
+are the important ones: they assert that the wind changes the ranking, that
+the hard limits disqualify a slot, that a profile tightens the limit, and
+that a private venue is never recommended.
+
+---
+
+## Known limitations
+
+These are real, and the assistant says the same things in its own responses.
+
+- **The air-quality forecast is coarse.** Outside Europe the CAMS grid is
+  roughly 25 to 40 km wide, so every venue in a city usually shares one
+  forecast value. The venue-to-venue difference comes from our exposure
+  model, not from the API. A nearby station corrects the level, not the
+  shape.
+- **The exposure model is not calibrated against measurements.** The weights
+  are documented engineering defaults, chosen to be conservative. The
+  reasoning is explicit and inspectable, but it is a model of pollution, not
+  a measurement of it.
+- **There is no live traffic feed.** Travel time is OSRM car routing plus a
+  documented time-of-day multiplier per road class. It is an approximation
+  and it is labelled as one.
+- **OpenStreetMap coverage is uneven.** In a small city there may be one
+  mapped pitch or none. The assistant says so instead of inventing a place.
+- **The public Overpass mirrors are slow and throttled.** They are the
+  reason the answer takes 20 to 40 seconds. A regional OpenStreetMap
+  extract removes the dependency and the code is there
+  (`app/sources/geofabrik.py`), but it needs a download that cannot be
+  guaranteed before a demonstration, so it is off by default.
+- **The model is small.** It misreads an unusual phrasing now and then.
+  The code overrides it wherever the question is clear.
+- **A question takes 20 to 40 seconds.** The live data is 8 to 25 seconds of
+  that and the model 8 to 20.
 
 ---
 
 ## Disclosure
 
-- **Models:** only `Qwen/Qwen3-1.7B` (Apache-2.0) is used, locally, through llama.cpp.
-  No GPT-4-class, Claude or Gemini model is used anywhere in the running assistant.
-- **AI coding assistants** were used to write and refactor the code (Claude Code and
-  OpenCode). The model itself is only the small open-weights model above.
-- **Data:** every source is free and open, and is listed above. No paid or private API
-  is used.
-- **Privacy:** user queries are not stored. Only aggregate counters and debug logs are
-  kept, and the local cache holds public API responses.
-- **Third-party libraries.** Every dependency is permissive and compatible with
-  Apache-2.0:
-
-  | Library | Licence | Used for |
-  | --- | --- | --- |
-  | FastAPI | MIT | the HTTP API |
-  | Uvicorn | BSD-3 | the ASGI server |
-  | httpx | BSD-3 | the HTTP client |
-  | Pydantic, pydantic-settings | MIT | validation and settings |
-  | Starlette | BSD-3 | the ASGI framework under FastAPI |
-  | diskcache | Apache-2.0 | the response cache |
-  | PyYAML | MIT | the activity and profile configuration |
-  | Astral | Apache-2.0 | the offline sunrise and sunset fallback |
-  | llama-cpp-python | MIT | running the model |
-  | Jinja2 | BSD-3 | the chat template |
-  | NumPy | BSD-3 | pulled in by llama-cpp-python |
-  | anyio, certifi, httptools, idna, sniffio, urllib3 | MIT, MIT, MIT, MPL-2.0, MIT, MIT | transitive |
-  | uvloop, watchfiles, websockets, python-dotenv | MIT, MIT, BSD-3, BSD-3 | server extras and configuration |
-  | pytest, pytest-asyncio, respx, ruff | MIT, Apache-2.0, BSD-3, MIT | development only |
+- **Models.** The only language model used at request time is
+  `Qwen/Qwen3-1.7B`, Apache-2.0, run locally through llama.cpp. No
+  GPT-4-class, Claude or Gemini model is called anywhere in the running
+  assistant.
+- **AI coding assistants** were used to write and refactor the code. They
+  are not used by the service at request time.
+- **Data.** Every source is free and open, and is listed above with its
+  licence. No paid or private API is used, and nothing is scraped behind a
+  login.
+- **Privacy.** User questions are not stored. Only aggregate counters and
+  debug logs are kept, and the local cache holds public API responses.
 
 ---
 
-## Development
+## The rulebook, point by point
 
-```bash
-source .venv/bin/activate
-uvicorn app.main:app --reload --port 7860
-pytest -q                                  # unit tests
-.venv/bin/python scripts/eval_queries.py   # the 15-question smoke set
-.venv/bin/python scripts/eval_queries.py --live
-./scripts/model_server.sh status            # optional local llama-server
-```
-
-`docs/RUNBOOK.md` documents the environment quirks we hit (User-Agent rules for
-Nominatim and Overpass, working mirrors, measured model speed, how to switch thinking
-off).
-
-### Layout
-
-```
-app/
-  main.py             FastAPI: /ask, /health, /context, /sources
-  config.py           keys, TTLs, mirrors, per-source User-Agents
-  planner.py          "tomorrow evening" -> concrete hours in IST
-  slm.py              local model: grammar-constrained JSON, non-thinking
-  context.py          gather_context(): live data, evidence, degradation
-  exposure_engine.py  deterministic scoring of every venue x hour
-  verifier.py         grounding checks + fact table
-  pipeline.py         orchestration and the response contract
-  sources/            geocode, overpass, weather, airquality, routing, daylight, elevation
-app/configs/          activities.yaml, profiles.yaml, hazards.yaml, exposure_weights.yaml
-tests/                unit tests
-scripts/              eval_queries.py, model_server.sh, smoke_test.py
-```
+| Requirement | Where it is met |
+| --- | --- |
+| Identify the activity, the area or radius, the time range and any personal detail | `app/planner.py`, `app/pipeline.py` |
+| Consider several nearby places across the upcoming hours | `app/exposure_engine.py` |
+| Account for wind, roads and traffic, industry, water and green cover | `app/exposure_engine.py` and `app/configs/hazards.yaml` |
+| A clear recommendation, what to carry, what to watch for, when to avoid | `app/pipeline.py` |
+| Every claim backed by the live data, nothing invented | `app/verifier.py` |
+| A response that can carry maps and images | `map_geojson` in every response |
+| Ten activities | `app/configs/activities.yaml` |
+| Profiles that tighten the limits | `app/configs/profiles.yaml` |
+| Missing location, vague time and out of scope handled gracefully | `app/pipeline.py`, the gate |
+| Live data from free and open sources, disclosed, rate limited, cached | `app/sources/`, the table above |
+| A model of at most 3B, open weights, run by us | `Qwen3-1.7B`, 2.03B, llama.cpp |
+| The model on Hugging Face, with a card and an open licence | `som-doe2007/geoai-outdoor-assistant` |
+| A live API endpoint | `POST /ask` |
+| A code repository | this repository |
+| A README with how to run, the model, the sources and the endpoint URL | this file |
+| A presentation | the team owns the slides |
+| © OpenStreetMap contributors | in every response and here |

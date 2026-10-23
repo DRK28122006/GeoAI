@@ -218,18 +218,25 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
     t0 = time.perf_counter()
     # Two independent venue sources run together and are merged: Overpass has
     # the best tag coverage but is often slow, Nominatim answers in ~1s.
-    # Geofabrik is tried first when enabled: it is local and fast after the
-    # first download. Overpass remains the fallback for anything it cannot
-    # answer, so a failed extract never breaks the request.
+    # Geofabrik is tried first when enabled: it is local and fast once the
+    # extract has been downloaded. It never waits for a download, so it
+    # answers "not ready" straight away and the download goes on in the
+    # background. Overpass remains the fallback for anything the local
+    # extract cannot answer, so a failed extract never breaks the request.
     async def _venues_from_geofabrik():
         if not settings.GEOFABRIK_ENABLED:
             return None
         try:
-            res = await geofabrik.get_venues(
-                intent.activity, origin.lat, origin.lon, intent.radius_km
+            res = await asyncio.wait_for(
+                geofabrik.get_venues(
+                    intent.activity, origin.lat, origin.lon, intent.radius_km
+                ),
+                timeout=settings.GEOFABRIK_QUERY_TIMEOUT_S,
             )
             if res is not None and res.ok and res.data:
                 return res
+        except TimeoutError:
+            logger.warning("the local venue lookup did not answer in time")
         except Exception as exc:  # noqa: BLE001
             logger.warning("Geofabrik venues failed, falling back to Overpass: %s", exc)
         return None
@@ -279,7 +286,10 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
             venue_res = gf_venue_res
         nom_venue_res = None
     timings["venues_ms"] = round((time.perf_counter() - t0) * 1000)
-    status["overpass_venues"] = venue_res.ok
+    status["geofabrik_venues"] = venue_res.source == "geofabrik"
+    status["overpass_venues"] = bool(
+        venue_res.source == "overpass" and venue_res.ok
+    )
     venues = venue_res.data or []
     if not venue_res.ok:
         limitations.append(f"Overpass venue lookup failed: {venue_res.error}")
@@ -360,9 +370,16 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
     async def _hazards():
         if settings.GEOFABRIK_ENABLED:
             try:
-                res = await geofabrik.get_hazards(hazard_lat, hazard_lon, radius_km=hazard_radius_km)
+                res = await asyncio.wait_for(
+                    geofabrik.get_hazards(
+                        hazard_lat, hazard_lon, radius_km=hazard_radius_km
+                    ),
+                    timeout=settings.GEOFABRIK_QUERY_TIMEOUT_S,
+                )
                 if res is not None and res.ok and res.data is not None:
                     return res
+            except TimeoutError:
+                logger.warning("the local hazard lookup did not answer in time")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Geofabrik hazards failed, falling back to Overpass: %s", exc)
         return await overpass.get_hazards(hazard_lat, hazard_lon, radius_km=hazard_radius_km)
@@ -432,6 +449,7 @@ async def gather_context(intent: Intent) -> dict[str, Any]:
         status[name] = ok
         if not ok:
             limitations.append(f"{name} was unavailable; the answer is based on the other sources.")
+    status["geofabrik_hazards"] = bool(hazard_res and hazard_res.source == "geofabrik")
 
     hazards = hazard_res.data if hazard_res and hazard_res.ok else []
     weather = weather_res.data if weather_res and weather_res.ok else []
