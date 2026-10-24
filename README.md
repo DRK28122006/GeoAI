@@ -79,4 +79,18 @@ npm run dev        # opens on http://localhost:5173
 npm test           # history storage tests (vitest)
 ```
 
-It calls `http://127.0.0.1:7860` by default. Change it in the sidebar ("Assistant server"), or set `VITE_API_URL` in `frontend/.env.local`.
+## 📜 Credits & Declarations
+
+### AI Assistance
+This project was developed with the assistance of **Claude (Anthropic)** for architectural planning, code optimization, and documentation. All core logic, the Exposure Engine, and the Verification Loop were designed and implemented by the developer.
+
+### External APIs & Data
+The system relies on the following external services:
+- **OpenStreetMap (Overpass API)**: Venue and geospatial data.
+- **Open-Meteo API**: Weather and CAMS Air Quality data.
+- **World Air Quality Index (WAQI)**: Ground-station AQI data.
+- **OSRM API**: Distance and travel-time routing.
+
+### Model Credit
+- **Base Model**: `Qwen3-1.7B` developed by the **Qwen Team (Alibaba Cloud)**.
+- **Quantization**: GGUF format via `llama.cpp`.
