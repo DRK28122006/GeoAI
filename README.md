@@ -2,6 +2,7 @@
 
 A high-precision backend system that recommends optimal outdoor activities and time windows based on live environmental data, geospatial context, and personalized health profiles.
 
+
 ## 🌐 Live Deployment
 - **Web Portal**: `https://85-211-194-173.sslip.io/` (Interactive UI)
 - **API Endpoint**: `https://85-211-194-173.sslip.io/ask`

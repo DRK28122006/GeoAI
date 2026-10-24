@@ -229,16 +229,3 @@ The VM has no application-level request rate limit beyond
 
 ---
 
-## Handoff checklist
-
-- [ ] Send Ramcharan the base URL and `/docs`
-- [ ] Send the SSH key over a secure channel
-- [ ] Tell him: **120-second timeout**, retry on `busy`
-- [ ] Set Azure budget alerts
-- [ ] Put `https://85-211-194-173.sslip.io` in the frontend and README
-- [ ] Add an UptimeRobot monitor on `/ready` every 5 minutes
-- [ ] Restrict SSH to known IPs after setup
-- [ ] Push `5a90499` and the latest local docs/handoff commit, and revoke
-      the exposed tokens
-- [ ] Merge into `DRK28122006/GeoAI`
-- [ ] Finish the 4–6 slides
