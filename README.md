@@ -91,6 +91,9 @@ The system relies on the following external services:
 - **World Air Quality Index (WAQI)**: Ground-station AQI data.
 - **OSRM API**: Distance and travel-time routing.
 
+### Hosting & Infrastructure
+- **Azure App Service**: Used for hosting the live API endpoint and managing the cloud environment.
+
 ### Model Credit
 - **Base Model**: `Qwen3-1.7B` developed by the **Qwen Team (Alibaba Cloud)**.
 - **Quantization**: GGUF format via `llama.cpp`.
