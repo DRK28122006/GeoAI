@@ -1,7 +1,7 @@
 # GeoAI Outdoor Assistant
 
 A high-precision backend system that recommends optimal outdoor activities and time windows based on live environmental data, geospatial context, and personalized health profiles.
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/11c0bbbf-e4f4-45a0-b281-05b75147e87c" />
+
 
 ## 🌐 Live Deployment
 - **Web Portal**: `https://85-211-194-173.sslip.io/` (Interactive UI)
