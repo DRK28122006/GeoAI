@@ -2,10 +2,12 @@
 
 A high-precision backend system that recommends optimal outdoor activities and time windows based on live environmental data, geospatial context, and personalized health profiles.
 
+<img width="902" height="650" alt="WhatsApp Image 2026-10-24 at 16 55 33" src="https://github.com/user-attachments/assets/73d8b8fd-637b-4744-8621-50bd99e89d2b" />
+
 ## 🌐 Live Deployment
-- **Web Portal**: `https://geoai-outdoor-assistant.azurewebsites.net/` (Interactive UI)
-- **API Endpoint**: `https://geoai-outdoor-assistant.azurewebsites.net/ask`
-- **Interactive API Docs**: `https://geoai-outdoor-assistant.azurewebsites.net/docs` (Swagger UI)
+- **Web Portal**: `https://85-211-194-173.sslip.io`
+- **API Endpoint**: `https://85-211-194-173.sslip.io/docs/ask`
+- **Interactive API Docs**: ` https://85-211-194-173.sslip.io/docs` (Swagger UI
 
 ### Quick Test
 ```bash
