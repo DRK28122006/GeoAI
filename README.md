@@ -67,3 +67,15 @@ For developers wishing to run the system locally:
    ```bash
    uvicorn app.main:app --host 0.0.0.0 --port 7860
    ```
+
+## 🗺️ Frontend
+`frontend/` is a React + Vite chat UI for the `/ask` API: question history on the left, an OpenStreetMap (Leaflet) map in the middle and the assistant on the right. History is kept in the browser's localStorage.
+
+```bash
+cd frontend
+npm install
+npm run dev        # opens on http://localhost:5173
+npm test           # history storage tests (vitest)
+```
+
+It calls `http://127.0.0.1:7860` by default. Change it in the sidebar ("Assistant server"), or set `VITE_API_URL` in `frontend/.env.local`.
