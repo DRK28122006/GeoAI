@@ -3,13 +3,14 @@
 A high-precision backend system that recommends optimal outdoor activities and time windows based on live environmental data, geospatial context, and personalized health profiles.
 
 ## 🌐 Live Deployment
-- **Web Portal**: `https://geoai-outdoor-assistant.azurewebsites.net/` (Interactive UI)
-- **API Endpoint**: `https://geoai-outdoor-assistant.azurewebsites.net/ask`
-- **Interactive API Docs**: `https://geoai-outdoor-assistant.azurewebsites.net/docs` (Swagger UI)
+- **Web Portal**: `https://85-211-194-173.sslip.io/` (Interactive UI)
+- **API Endpoint**: `https://85-211-194-173.sslip.io/ask`
+- **Interactive API Docs**: `https://85-211-194-173.sslip.io/docs` (Swagger UI)
+- **OpenAPI Schema**: `https://85-211-194-173.sslip.io/openapi.json`
 
 ### Quick Test
 ```bash
-curl -X POST https://geoai-outdoor-assistant.azurewebsites.net/ask \
+curl -X POST https://85-211-194-173.sslip.io/ask \
   -H 'Content-Type: application/json' \
   -d '{"question": "Best time to go running near Powai tomorrow morning? I have asthma"}'
 ```
